@@ -1,13 +1,13 @@
-# permissions for end users to edit clusters.
+# permissions for end users to edit gitopsclusters.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: cluster-editor-role
+  name: gitopscluster-editor-role
 rules:
 - apiGroups:
   - gitops.weave.works
   resources:
-  - clusters
+  - gitopsclusters
   verbs:
   - create
   - delete
@@ -19,6 +19,6 @@ rules:
 - apiGroups:
   - gitops.weave.works
   resources:
-  - clusters/status
+  - gitopsclusters/status
   verbs:
   - get

@@ -1,13 +1,13 @@
-# permissions for end users to view clusters.
+# permissions for end users to view gitopsclusters.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: cluster-viewer-role
+  name: gitopscluster-viewer-role
 rules:
 - apiGroups:
   - gitops.weave.works
   resources:
-  - clusters
+  - gitopsclusters
   verbs:
   - get
   - list
@@ -15,6 +15,6 @@ rules:
 - apiGroups:
   - gitops.weave.works
   resources:
-  - clusters/status
+  - gitopsclusters/status
   verbs:
   - get
