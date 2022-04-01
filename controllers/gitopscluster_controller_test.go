@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/fluxcd/pkg/apis/meta"
 	gitopsv1alpha1 "github.com/weaveworks/cluster-controller/api/v1alpha1"
@@ -26,10 +27,11 @@ const (
 
 func TestReconcile(t *testing.T) {
 	tests := []struct {
-		name      string
-		state     []runtime.Object
-		obj       types.NamespacedName
-		errString string
+		name         string
+		state        []runtime.Object
+		obj          types.NamespacedName
+		requeueAfter time.Duration
+		errString    string
 	}{
 		{
 			name: "secret does not exist",
@@ -40,8 +42,8 @@ func TestReconcile(t *testing.T) {
 					}
 				}),
 			},
-			obj:       types.NamespacedName{Namespace: testNamespace, Name: testName},
-			errString: "failed to get secret.*missing.*not found",
+			obj:          types.NamespacedName{Namespace: testNamespace, Name: testName},
+			requeueAfter: controllers.MissingSecretRequeueTime,
 		},
 		{
 			name: "secret exists",
@@ -90,7 +92,12 @@ func TestReconcile(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := makeTestReconciler(t, tt.state...)
-			_, err := r.Reconcile(context.TODO(), reconcile.Request{NamespacedName: tt.obj})
+
+			result, err := r.Reconcile(context.TODO(), reconcile.Request{NamespacedName: tt.obj})
+
+			if result.RequeueAfter != tt.requeueAfter {
+				t.Fatalf("Reconcile() RequeueAfter got %v, want %v", result.RequeueAfter, tt.requeueAfter)
+			}
 			assertErrorMatch(t, tt.errString, err)
 		})
 	}
