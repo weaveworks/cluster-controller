@@ -19,11 +19,12 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/fluxcd/pkg/apis/meta"
 	"github.com/fluxcd/pkg/runtime/conditions"
-	gitopsv1alpha1 "github.com/weaveworks/cluster-controller/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -32,6 +33,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/source"
+
+	gitopsv1alpha1 "github.com/weaveworks/cluster-controller/api/v1alpha1"
 )
 
 const (
@@ -41,6 +44,10 @@ const (
 	// CAPIClusterNameIndexKey is the key used for indexing CAPI cluster
 	// resources based on their name.
 	CAPIClusterNameIndexKey string = "CAPIClusterNameIndexKey"
+
+	// MissingSecretRequeueTime is the period after which a secret will be
+	// checked if it doesn't exist.
+	MissingSecretRequeueTime = time.Second * 30
 )
 
 // GitopsClusterReconciler reconciles a GitopsCluster object
@@ -57,13 +64,6 @@ type GitopsClusterReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the GitopsCluster object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.11.0/pkg/reconcile
 func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
@@ -82,6 +82,12 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 		var secret corev1.Secret
 		if err := r.Get(ctx, name, &secret); err != nil {
+			if apierrors.IsNotFound(err) {
+				// TODO: this could _possibly_ be controllable by the
+				// `GitopsCluster` itself.
+				log.Info("waiting for cluster secret to be available")
+				return ctrl.Result{RequeueAfter: MissingSecretRequeueTime}, nil
+			}
 			e := fmt.Errorf("failed to get secret %q: %w", name, err)
 			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, e.Error())
 
