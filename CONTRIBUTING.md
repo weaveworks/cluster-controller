@@ -109,7 +109,7 @@ The following instructions explain how to create a kubeconfig that can be used t
 
    For other types of clusters you will usually need to copy the file from your cluster using SSH or download it from a console UI.
 
-8. Create a kubeconfig
+8. Create a kubeconfig secret
 
     Create a YAML file by running the helper script `./x509/static-kubeconfig`:
 
@@ -150,6 +150,210 @@ https://demo-01-control-plane:6443
 The domain name and port returned (`demo-01-control-plane:6443` in the above example) is the endpoint of the API server.
 
 ---
+
+### How to create a kubeconfig secret for GKE using Terraform
+
+---
+**NOTE**
+This approach uses the `google_client_config` resource from the official Google Cloud Terraform provider to retrieve an access token that is valid for 1 hour. Therefore this method of creating a kubeconfig secret can be used in dev environments but is not recommended for production environments.
+
+---
+
+Requires terraform >= 1.1.5
+
+The following instructions explain how to create a kubeconfig that can be used to query a remote GKE cluster from a management cluster. It assumes that you have already created a GKE cluster through Terraform and want to generate a kubeconfig secret for it.
+
+1. Add the following template to your Terraform configuration
+
+```yaml
+apiVersion: v1
+kind: Config
+
+clusters:
+- name: ${cluster_name}
+  cluster:
+    server: https://${endpoint}
+    certificate-authority-data: ${cluster_ca_certificate}
+
+users:
+- name: ${user_name}
+  user:
+    token: ${token}
+
+contexts:
+- name: ${context}
+  context:
+    cluster: ${cluster_name}
+    user: ${user_name}
+  
+current-context: ${context}
+```
+
+The template parameters `${..}` will be substituted in the next step.
+
+2. Add the following data sources to your Terraform configuration
+
+```tf
+data "google_client_config" "provider" {}
+
+data "template_file" "kubeconfig" {
+  template = file("${path.module}/templates/kubeconfig.yaml.tpl")
+
+  vars = {
+    cluster_name            = <cluster-name>
+    user_name               = <user-name>
+    context                 = <cluster-name>
+    cluster_ca_certificate  = <cluster-ca-certificate>
+    // The cluster's Kubernetes API endpoint
+    endpoint                = <cluster-endpoint>
+    // The OAuth2 access token used by the client to authenticate against the Google Cloud API.
+    token                   = data.google_client_config.provider.access_token
+  }
+}
+```
+
+The `kubeconfig` data source references the template created in step 1 and populates its parameters. The values will typically be set to outputs of a cluster resource or module. The token will belong to the user running the Terraform commands.
+
+3. Add an output value for the kubeconfig to your Terraform cluster configuration
+
+```tf
+output "demo_01_kubeconfig" {
+  description = "A kubeconfig file configured to access the GKE cluster."
+  value       = data.template_file.kubeconfig.rendered
+}
+```
+
+4. Create the kubeconfig
+
+Run the following command to output the kubeconfig
+
+```sh
+terraform output -raw demo_01_kubeconfig > demo-01-kubeconfig
+```
+Finally create a secret for the generated kubeconfig:
+
+```sh
+kubectl create secret generic demo-01-kubeconfig \
+--from-file=value.yaml=./demo-01-kubeconfig \
+--dry-run=client -o yaml > demo-01-kubeconfig.yaml
+```
+
+### How to create a kubeconfig secret for GKE using gcloud
+
+---
+**NOTE**
+This approach uses `gcloud` to retrieve an access token that is valid for 1 hour. Therefore this method of creating a kubeconfig secret can be used in dev environments but is not recommended for production environments.
+
+---
+
+Requires gcloud >= 352.0.0
+
+1. List your running clusters and their locations using `gcloud`
+
+```sh
+gcloud container clusters list --format="table(name,zone)" --filter="status=running"
+NAME                                    LOCATION
+demo-01                                 europe-north1-a
+```
+
+2. Run the following command to output the kubeconfig
+
+```sh
+CLUSTER_NAME=demo-01 COMPUTE_ZONE=europe-north1-a ./tools/gke/token-kubeconfig.sh > demo-01-kubeconfig
+```
+
+Replace the following:
+- CLUSTER_NAME: the name of your cluster i.e. `demo-01`
+- COMPUTE_ZONE: the GCP location (zone) of your cluster i.e. `europe-north1-a`
+
+Finally create a secret for the generated kubeconfig:
+
+```sh
+kubectl create secret generic demo-01-kubeconfig \
+--from-file=value.yaml=./demo-01-kubeconfig \
+--dry-run=client -o yaml > demo-01-kubeconfig.yaml
+```
+
+### How to create a kubeconfig secret using a service account
+
+1. Create a new service account on the remote cluster:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: demo-01
+  namespace: default
+```
+
+2. Add RBAC permissions for the service account
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pods-reader
+  namespace: default
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "watch", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: read-pods
+  namespace: default
+subjects:
+- kind: ServiceAccount
+  name: demo-01
+  namespace: default
+roleRef:
+   kind: Role
+   name: pods-reader
+   apiGroup: rbac.authorization.k8s.io
+```
+
+In this example, `demo-01` can list the pods in the default namespace.
+
+3. Get the token of the service account
+
+First get the list of secrets of the service accounts by running the following command:
+```sh
+kubectl get secrets --field-selector type=kubernetes.io/service-account-token
+NAME                      TYPE                                  DATA   AGE
+default-token-lsjz4       kubernetes.io/service-account-token   3      13d
+demo-01-token-gqz7p       kubernetes.io/service-account-token   3      99m
+```
+`demo-01-token-gqz7p` is the secret that holds the token for `demo-01` service account
+
+To get the token of the service account run the following command:
+```sh
+TOKEN=$(kubectl get secret demo-01-token-gqz7p -o jsonpath={.data.token} | base64 -d)
+```
+
+4. Create a kubeconfig secret
+
+```sh
+CLUSTER_NAME=demo-01 \
+CA_CERTIFICATE=ca.crt \
+ENDPOINT=<control-plane-ip-address> \
+TOKEN=<token> ./tools/sa/static-kubeconfig.sh > demo-01-kubeconfig
+```
+
+Replace the following:
+- CLUSTER_NAME: the name of your cluster i.e. `demo-01`
+- ENDPOINT: the API server endpoint i.e. `34.218.72.31`
+- CA_CERTIFICATE: path to the CA certificate file of the cluster
+- TOKEN: the token of the service account retrieved in the previous step
+
+Finally create a secret for the generated kubeconfig:
+
+```sh
+kubectl create secret generic demo-01-kubeconfig \
+--from-file=value.yaml=./demo-01-kubeconfig \
+--dry-run=client -o yaml > demo-01-kubeconfig.yaml
+```
 
 ### How to test a kubeconfig secret in a cluster
 
