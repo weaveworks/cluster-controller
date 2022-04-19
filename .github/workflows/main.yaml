@@ -1,0 +1,88 @@
+on:
+  push:
+    branches:
+      - "main"
+name: release
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      major: ${{ steps.release.outputs.major }}
+      minor: ${{ steps.release.outputs.minor }}
+    steps:
+      - name: Release | Create or update release PR
+        uses: google-github-actions/release-please-action@v3
+        id: release
+        with:
+          release-type: go
+          package-name: cluster-controller
+  
+  build:
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - name: Setup | Checkout
+        uses: actions/checkout@v3
+      - name: Setup | Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: 1.17.x
+      - name: Setup | Go Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+      - name: Setup | Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Setup | Image metadata
+        id: meta
+        uses: docker/metadata-action@v3
+        with:
+          images: |
+            weaveworks/cluster-controller
+          tags: |
+            type=raw,value={{sha}}
+      - name: Build | Test
+        run: |
+          go version
+          make test
+      - name: Publish | Login to Docker Hub
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Publish | Build and Push
+        uses: docker/build-push-action@v2
+        with:
+          push: true
+          builder: ${{ steps.buildx.outputs.name }}
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Release | Tag major and minor versions
+        if: ${{ needs.release.outputs.release_created }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git remote add gh-token "https://${{ secrets.GITHUB_TOKEN }}@github.com/weaveworks/cluster-controller.git"
+          # Delete matching tags (in case they have been created before)
+          git tag -d v${{ needs.release.outputs.major }} || true
+          git tag -d v${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }} || true
+          # Delete matching refs in the origin repository (in case they have been created before)
+          git push origin :v${{ needs.release.outputs.major }} || true
+          git push origin :v${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }} || true
+          # Create new matching tags
+          git tag -a v${{ needs.release.outputs.major }} -m "Release v${{ needs.release.outputs.major }}"
+          git tag -a v${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }} -m "Release v${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }}"
+          # Create new matching refs in the origin repository
+          git push origin v${{ needs.release.outputs.major }}
+          git push origin v${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }}
