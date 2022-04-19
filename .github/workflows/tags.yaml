@@ -1,0 +1,38 @@
+on:
+  push:
+    tags: [v*.*.*]
+
+name: release
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Setup | Checkout
+      uses: actions/checkout@v3
+    - name: Setup | Docker Buildx
+      id: buildx
+      uses: docker/setup-buildx-action@v1
+    - name: Setup | Image metadata
+      id: meta
+      uses: docker/metadata-action@v3
+      with:
+        images: |
+          weaveworks/cluster-controller
+        tags: |
+          type=semver,pattern={{version}}
+    - name: Publish | Login to Docker Hub
+      uses: docker/login-action@v1
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    - name: Publish | Build and Push
+      uses: docker/build-push-action@v2
+      with:
+        push: true
+        builder: ${{ steps.buildx.outputs.name }}
+        context: .
+        file: ./Dockerfile
+        platforms: linux/amd64
+        tags: ${{ steps.meta.outputs.tags }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
