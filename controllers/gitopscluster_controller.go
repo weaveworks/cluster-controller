@@ -27,9 +27,11 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/clientcmd"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -53,7 +55,18 @@ const (
 // GitopsClusterReconciler reconciles a GitopsCluster object
 type GitopsClusterReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme       *runtime.Scheme
+	ConfigParser func(b []byte) (client.Client, error)
+}
+
+// NewGitopsClusterReconciler creates and returns a configured
+// reconciler ready for use.
+func NewGitopsClusterReconciler(c client.Client, s *runtime.Scheme) *GitopsClusterReconciler {
+	return &GitopsClusterReconciler{
+		Client:       c,
+		Scheme:       s,
+		ConfigParser: kubeConfigBytesToClient,
+	}
 }
 
 // +kubebuilder:rbac:groups=gitops.weave.works,resources=gitopsclusters,verbs=get;list;watch;create;update;patch;delete
@@ -96,6 +109,27 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				return ctrl.Result{}, err
 			}
 
+			clusterName := types.NamespacedName{Name: cluster.GetName(), Namespace: cluster.GetNamespace()}
+			clusterClient, err := r.clientForCluster(ctx, clusterName)
+			if err != nil {
+				if apierrors.IsNotFound(err) {
+					log.Info("waiting for cluster access secret to be available")
+					return ctrl.Result{RequeueAfter: cluster.ClusterReadinessRequeue()}, nil
+				}
+
+				return ctrl.Result{}, fmt.Errorf("failed to create client for cluster %s: %w", clusterName, err)
+			}
+
+			ready, err := IsControlPlaneReady(ctx, clusterClient)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to check readiness of cluster %s: %w", clusterName, err)
+			}
+			if !ready {
+				log.Info("waiting for control plane to be ready", "cluster", clusterName)
+
+				return ctrl.Result{RequeueAfter: cluster.ClusterReadinessRequeue()}, nil
+			}
+
 			return ctrl.Result{}, e
 		}
 
@@ -131,6 +165,18 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			log.Error(err, "failed to update Cluster status")
 			return ctrl.Result{}, err
 		}
+	}
+
+	clusterName := types.NamespacedName{Name: cluster.GetName(), Namespace: cluster.GetNamespace()}
+	clusterClient, err := r.clientForCluster(ctx, clusterName)
+	ready, err := IsControlPlaneReady(ctx, clusterClient)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to check readiness of cluster %s: %w", clusterName, err)
+	}
+	if !ready {
+		log.Info("waiting for control plane to be ready", "cluster", clusterName)
+
+		return ctrl.Result{RequeueAfter: cluster.ClusterReadinessRequeue()}, nil
 	}
 
 	return ctrl.Result{}, nil
@@ -223,4 +269,60 @@ func (r *GitopsClusterReconciler) requestsForCAPIClusterChange(o client.Object) 
 		reqs = append(reqs, ctrl.Request{NamespacedName: name})
 	}
 	return reqs
+}
+
+func (r *GitopsClusterReconciler) clientForCluster(ctx context.Context, name types.NamespacedName) (client.Client, error) {
+	kubeConfigBytes, err := r.getKubeConfig(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := r.ConfigParser(kubeConfigBytes)
+	if err != nil {
+		return nil, fmt.Errorf("getting client for cluster %s: %w", name, err)
+	}
+	return client, nil
+}
+
+func (r *GitopsClusterReconciler) getKubeConfig(ctx context.Context, cluster types.NamespacedName) ([]byte, error) {
+	secretName := types.NamespacedName{
+		Namespace: cluster.Namespace,
+		Name:      cluster.Name + "-kubeconfig",
+	}
+
+	var secret corev1.Secret
+	if err := r.Client.Get(ctx, secretName, &secret); err != nil {
+		return nil, fmt.Errorf("unable to read KubeConfig secret %q error: %w", secretName, err)
+	}
+
+	var kubeConfig []byte
+	for k := range secret.Data {
+		if k == "value" || k == "value.yaml" {
+			kubeConfig = secret.Data[k]
+			break
+		}
+	}
+
+	if len(kubeConfig) == 0 {
+		return nil, fmt.Errorf("KubeConfig secret %q doesn't contain a 'value' key ", secretName)
+	}
+
+	return kubeConfig, nil
+}
+
+func kubeConfigBytesToClient(b []byte) (client.Client, error) {
+	restConfig, err := clientcmd.RESTConfigFromKubeConfig(b)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse KubeConfig from secret: %w", err)
+	}
+	restMapper, err := apiutil.NewDynamicRESTMapper(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create RESTMapper from config: %w", err)
+	}
+
+	client, err := client.New(restConfig, client.Options{Mapper: restMapper})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create a client from config: %w", err)
+	}
+	return client, nil
 }

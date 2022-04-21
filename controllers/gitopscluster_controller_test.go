@@ -36,6 +36,11 @@ func TestReconcile(t *testing.T) {
 		{
 			name: "secret does not exist",
 			state: []runtime.Object{
+				makeNode(map[string]string{
+					"node-role.kubernetes.io/master": "",
+				}, corev1.NodeCondition{Type: "Ready", Status: "True", LastHeartbeatTime: metav1.Now(),
+					LastTransitionTime: metav1.Now(), Reason: "KubeletReady",
+					Message: "kubelet is posting ready status"}),
 				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
 					c.Spec.SecretRef = &meta.LocalObjectReference{
 						Name: "missing",
@@ -48,6 +53,11 @@ func TestReconcile(t *testing.T) {
 		{
 			name: "secret exists",
 			state: []runtime.Object{
+				makeNode(map[string]string{
+					"node-role.kubernetes.io/master": "",
+				}, corev1.NodeCondition{Type: "Ready", Status: "True", LastHeartbeatTime: metav1.Now(),
+					LastTransitionTime: metav1.Now(), Reason: "KubeletReady",
+					Message: "kubelet is posting ready status"}),
 				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
 					c.Spec.SecretRef = &meta.LocalObjectReference{
 						Name: "dev",
@@ -63,6 +73,11 @@ func TestReconcile(t *testing.T) {
 		{
 			name: "CAPI cluster does not exist",
 			state: []runtime.Object{
+				makeNode(map[string]string{
+					"node-role.kubernetes.io/master": "",
+				}, corev1.NodeCondition{Type: "Ready", Status: "True", LastHeartbeatTime: metav1.Now(),
+					LastTransitionTime: metav1.Now(), Reason: "KubeletReady",
+					Message: "kubelet is posting ready status"}),
 				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
 					c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
 						Name: "missing",
@@ -75,6 +90,11 @@ func TestReconcile(t *testing.T) {
 		{
 			name: "CAPI cluster exists",
 			state: []runtime.Object{
+				makeNode(map[string]string{
+					"node-role.kubernetes.io/master": "",
+				}, corev1.NodeCondition{Type: "Ready", Status: "True", LastHeartbeatTime: metav1.Now(),
+					LastTransitionTime: metav1.Now(), Reason: "KubeletReady",
+					Message: "kubelet is posting ready status"}),
 				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
 					c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
 						Name: "dev",
@@ -92,6 +112,9 @@ func TestReconcile(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := makeTestReconciler(t, tt.state...)
+			r.ConfigParser = func(b []byte) (client.Client, error) {
+				return r.Client, nil
+			}
 
 			result, err := r.Reconcile(context.TODO(), reconcile.Request{NamespacedName: tt.obj})
 
@@ -103,12 +126,9 @@ func TestReconcile(t *testing.T) {
 	}
 }
 
-func makeTestReconciler(t *testing.T, objs ...runtime.Object) controllers.GitopsClusterReconciler {
+func makeTestReconciler(t *testing.T, objs ...runtime.Object) *controllers.GitopsClusterReconciler {
 	s, tc := makeTestClientAndScheme(t, objs...)
-	return controllers.GitopsClusterReconciler{
-		Client: tc,
-		Scheme: s,
-	}
+	return controllers.NewGitopsClusterReconciler(tc, s)
 }
 
 func makeTestClientAndScheme(t *testing.T, objs ...runtime.Object) (*runtime.Scheme, client.Client) {

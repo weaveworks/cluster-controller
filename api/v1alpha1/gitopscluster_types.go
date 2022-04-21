@@ -17,10 +17,14 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"time"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/fluxcd/pkg/apis/meta"
 )
+
+const defaultWaitDuration = time.Second * 60
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
@@ -33,6 +37,11 @@ type GitopsClusterSpec struct {
 	// CAPIClusterRef specifies the CAPI Cluster.
 	// +optional
 	CAPIClusterRef *meta.LocalObjectReference `json:"capiClusterRef,omitempty"`
+	// When checking for readiness, this is the time to wait before
+	// checking again.
+	//+kubebuilder:default:60s
+	//+optional
+	ClusterReadinessBackoff *metav1.Duration `json:"clusterReadinessBackoff,omitempty"`
 }
 
 // GitopsClusterStatus defines the observed state of GitopsCluster
@@ -65,6 +74,15 @@ type GitopsCluster struct {
 
 	Spec   GitopsClusterSpec   `json:"spec,omitempty"`
 	Status GitopsClusterStatus `json:"status,omitempty"`
+}
+
+// ClusterReadinessRequeue returns the configured ClusterReadinessBackoff or a default
+// value if not configured.
+func (c GitopsCluster) ClusterReadinessRequeue() time.Duration {
+	if v := c.Spec.ClusterReadinessBackoff; v != nil {
+		return v.Duration
+	}
+	return defaultWaitDuration
 }
 
 // +kubebuilder:object:root=true
