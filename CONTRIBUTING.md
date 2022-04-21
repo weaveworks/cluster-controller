@@ -334,6 +334,8 @@ TOKEN=$(kubectl get secret demo-01-token-gqz7p -o jsonpath={.data.token} | base6
 
 4. Create a kubeconfig secret
 
+For the next step, the cluster certificate (CA) is needed. How you get hold of the certificate depends on the cluster. For GKE you can view it on the GCP Console:  Cluster->Details->Endpoint->”Show cluster certificate”. You will need to copy the contents of the certificate into the `ca.crt` file used below. 
+
 ```sh
 CLUSTER_NAME=demo-01 \
 CA_CERTIFICATE=ca.crt \
