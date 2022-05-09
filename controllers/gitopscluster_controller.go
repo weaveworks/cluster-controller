@@ -99,11 +99,15 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				// TODO: this could _possibly_ be controllable by the
 				// `GitopsCluster` itself.
 				log.Info("waiting for cluster secret to be available")
+				conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, "")
+				if err := r.Status().Update(ctx, cluster); err != nil {
+					log.Error(err, "failed to update Cluster status")
+					return ctrl.Result{}, err
+				}
 				return ctrl.Result{RequeueAfter: MissingSecretRequeueTime}, nil
 			}
 			e := fmt.Errorf("failed to get secret %q: %w", name, err)
 			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, e.Error())
-
 			if err := r.Status().Update(ctx, cluster); err != nil {
 				log.Error(err, "failed to update Cluster status")
 				return ctrl.Result{}, err
@@ -129,7 +133,6 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if err := r.Get(ctx, name, &capiCluster); err != nil {
 			e := fmt.Errorf("failed to get CAPI cluster %q: %w", name, err)
 			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForCAPIClusterReason, e.Error())
-
 			if err := r.Status().Update(ctx, cluster); err != nil {
 				log.Error(err, "failed to update Cluster status")
 				return ctrl.Result{}, err
@@ -139,25 +142,28 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 
 		log.Info("CAPI Cluster found", "CAPI cluster", name)
-		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.CAPIClusterFoundReason, "")
-		if err := r.Status().Update(ctx, cluster); err != nil {
-			log.Error(err, "failed to update Cluster status")
-			return ctrl.Result{}, err
-		}
 
 		clusterName := types.NamespacedName{Name: cluster.GetName(), Namespace: cluster.GetNamespace()}
 		clusterClient, err := r.clientForCluster(ctx, *cluster)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to create client of cluster %s: %w", clusterName, err)
 		}
+
 		ready, err := IsControlPlaneReady(ctx, clusterClient)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to check readiness of cluster %s: %w", clusterName, err)
 		}
+
 		if !ready {
 			log.Info("waiting for control plane to be ready", "cluster", clusterName)
 
 			return ctrl.Result{RequeueAfter: cluster.ClusterReadinessRequeue()}, nil
+		}
+
+		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.CAPIClusterFoundReason, "")
+		if err := r.Status().Update(ctx, cluster); err != nil {
+			log.Error(err, "failed to update Cluster status")
+			return ctrl.Result{}, err
 		}
 	}
 
