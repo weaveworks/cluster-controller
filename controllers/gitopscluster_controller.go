@@ -117,6 +117,23 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 
 		log.Info("Secret found", "secret", name)
+
+		ready, err := r.checkControlPlaneReadiness(ctx, *cluster)
+		if err != nil {
+			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, err.Error())
+			if err := r.Status().Update(ctx, cluster); err != nil {
+				log.Error(err, "failed to update Cluster status")
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, err
+		}
+
+		if !ready {
+			log.Info("waiting for control plane to be ready", "cluster", cluster.Name)
+
+			return ctrl.Result{RequeueAfter: cluster.ClusterReadinessRequeue()}, nil
+		}
+
 		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.SecretFoundReason, "")
 		if err := r.Status().Update(ctx, cluster); err != nil {
 			log.Error(err, "failed to update Cluster status")
@@ -143,19 +160,18 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 		log.Info("CAPI Cluster found", "CAPI cluster", name)
 
-		clusterName := types.NamespacedName{Name: cluster.GetName(), Namespace: cluster.GetNamespace()}
-		clusterClient, err := r.clientForCluster(ctx, *cluster)
+		ready, err := r.checkControlPlaneReadiness(ctx, *cluster)
 		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to create client of cluster %s: %w", clusterName, err)
-		}
-
-		ready, err := IsControlPlaneReady(ctx, clusterClient)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to check readiness of cluster %s: %w", clusterName, err)
+			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForCAPIClusterReason, err.Error())
+			if err := r.Status().Update(ctx, cluster); err != nil {
+				log.Error(err, "failed to update Cluster status")
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, fmt.Errorf("failed to check readiness of cluster %s: %w", cluster.Name, err)
 		}
 
 		if !ready {
-			log.Info("waiting for control plane to be ready", "cluster", clusterName)
+			log.Info("waiting for control plane to be ready", "cluster", cluster.Name)
 
 			return ctrl.Result{RequeueAfter: cluster.ClusterReadinessRequeue()}, nil
 		}
@@ -259,6 +275,25 @@ func (r *GitopsClusterReconciler) requestsForCAPIClusterChange(o client.Object) 
 	return reqs
 }
 
+func (r *GitopsClusterReconciler) checkControlPlaneReadiness(ctx context.Context, cluster gitopsv1alpha1.GitopsCluster) (bool, error) {
+	clusterName := types.NamespacedName{Name: cluster.GetName(), Namespace: cluster.GetNamespace()}
+	clusterClient, err := r.clientForCluster(ctx, cluster)
+	if err != nil {
+		return false, fmt.Errorf("failed to create client of cluster %s: %w", clusterName, err)
+	}
+
+	ready, err := IsControlPlaneReady(ctx, clusterClient)
+	if err != nil {
+		return false, fmt.Errorf("failed to check readiness of cluster %s: %w", clusterName, err)
+	}
+
+	if !ready {
+		return false, nil
+	}
+
+	return true, nil
+}
+
 func (r *GitopsClusterReconciler) clientForCluster(ctx context.Context, cluster gitopsv1alpha1.GitopsCluster) (client.Client, error) {
 	kubeConfigBytes, err := r.getKubeConfig(ctx, cluster)
 	if err != nil {
@@ -273,9 +308,16 @@ func (r *GitopsClusterReconciler) clientForCluster(ctx context.Context, cluster 
 }
 
 func (r *GitopsClusterReconciler) getKubeConfig(ctx context.Context, cluster gitopsv1alpha1.GitopsCluster) ([]byte, error) {
+	var name string
+	if cluster.Spec.CAPIClusterRef != nil {
+		name = cluster.Spec.CAPIClusterRef.Name + "-kubeconfig"
+	} else {
+		name = cluster.Spec.SecretRef.Name
+	}
+
 	secretName := types.NamespacedName{
 		Namespace: cluster.GetNamespace(),
-		Name:      cluster.Spec.CAPIClusterRef.Name + "-kubeconfig",
+		Name:      name,
 	}
 
 	var secret corev1.Secret

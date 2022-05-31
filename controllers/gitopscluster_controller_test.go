@@ -55,10 +55,19 @@ func TestReconcile(t *testing.T) {
 			}),
 			expectedCondition: &metav1.Condition{Type: "Ready", Status: "True"},
 			runtimeObjects: []runtime.Object{
+				makeNode(map[string]string{
+					"node-role.kubernetes.io/master": "",
+				}, corev1.NodeCondition{Type: "Ready", Status: "True", LastHeartbeatTime: metav1.Now(),
+					LastTransitionTime: metav1.Now(), Reason: "KubeletReady",
+					Message: "kubelet is posting ready status"}),
 				makeTestSecret(types.NamespacedName{
 					Name:      "dev",
 					Namespace: testNamespace,
 				}, map[string][]byte{"value": []byte("testing")}),
+				makeTestSecret(types.NamespacedName{
+					Name:      "dev-kubeconfig",
+					Namespace: testNamespace,
+				}, map[string][]byte{"value": []byte("foo")}),
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 		},
