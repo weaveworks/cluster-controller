@@ -27,11 +27,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/clientcmd"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -65,7 +63,6 @@ func NewGitopsClusterReconciler(c client.Client, s *runtime.Scheme) *GitopsClust
 	return &GitopsClusterReconciler{
 		Client:       c,
 		Scheme:       s,
-		ConfigParser: kubeConfigBytesToClient,
 	}
 }
 
@@ -159,22 +156,6 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 
 		log.Info("CAPI Cluster found", "CAPI cluster", name)
-
-		ready, err := r.checkControlPlaneReadiness(ctx, *cluster)
-		if err != nil {
-			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForCAPIClusterReason, err.Error())
-			if err := r.Status().Update(ctx, cluster); err != nil {
-				log.Error(err, "failed to update Cluster status")
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{}, fmt.Errorf("failed to check readiness of cluster %s: %w", cluster.Name, err)
-		}
-
-		if !ready {
-			log.Info("waiting for control plane to be ready", "cluster", cluster.Name)
-
-			return ctrl.Result{RequeueAfter: cluster.ClusterReadinessRequeue()}, nil
-		}
 
 		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.CAPIClusterFoundReason, "")
 		if err := r.Status().Update(ctx, cluster); err != nil {
@@ -275,84 +256,3 @@ func (r *GitopsClusterReconciler) requestsForCAPIClusterChange(o client.Object) 
 	return reqs
 }
 
-func (r *GitopsClusterReconciler) checkControlPlaneReadiness(ctx context.Context, cluster gitopsv1alpha1.GitopsCluster) (bool, error) {
-	clusterName := types.NamespacedName{Name: cluster.GetName(), Namespace: cluster.GetNamespace()}
-	clusterClient, err := r.clientForCluster(ctx, cluster)
-	if err != nil {
-		return false, fmt.Errorf("failed to create client of cluster %s: %w", clusterName, err)
-	}
-
-	ready, err := IsControlPlaneReady(ctx, clusterClient)
-	if err != nil {
-		return false, fmt.Errorf("failed to check readiness of cluster %s: %w", clusterName, err)
-	}
-
-	if !ready {
-		return false, nil
-	}
-
-	return true, nil
-}
-
-func (r *GitopsClusterReconciler) clientForCluster(ctx context.Context, cluster gitopsv1alpha1.GitopsCluster) (client.Client, error) {
-	kubeConfigBytes, err := r.getKubeConfig(ctx, cluster)
-	if err != nil {
-		return nil, err
-	}
-
-	client, err := r.ConfigParser(kubeConfigBytes)
-	if err != nil {
-		return nil, fmt.Errorf("getting client for cluster %s: %w", cluster.Name, err)
-	}
-	return client, nil
-}
-
-func (r *GitopsClusterReconciler) getKubeConfig(ctx context.Context, cluster gitopsv1alpha1.GitopsCluster) ([]byte, error) {
-	var name string
-	if cluster.Spec.CAPIClusterRef != nil {
-		name = cluster.Spec.CAPIClusterRef.Name + "-kubeconfig"
-	} else {
-		name = cluster.Spec.SecretRef.Name
-	}
-
-	secretName := types.NamespacedName{
-		Namespace: cluster.GetNamespace(),
-		Name:      name,
-	}
-
-	var secret corev1.Secret
-	if err := r.Client.Get(ctx, secretName, &secret); err != nil {
-		return nil, fmt.Errorf("unable to read KubeConfig secret %q error: %w", secretName, err)
-	}
-
-	var kubeConfig []byte
-	for k := range secret.Data {
-		if k == "value" || k == "value.yaml" {
-			kubeConfig = secret.Data[k]
-			break
-		}
-	}
-
-	if len(kubeConfig) == 0 {
-		return nil, fmt.Errorf("KubeConfig secret %q doesn't contain a 'value' key ", secretName)
-	}
-
-	return kubeConfig, nil
-}
-
-func kubeConfigBytesToClient(b []byte) (client.Client, error) {
-	restConfig, err := clientcmd.RESTConfigFromKubeConfig(b)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse KubeConfig from secret: %w", err)
-	}
-	restMapper, err := apiutil.NewDynamicRESTMapper(restConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create RESTMapper from config: %w", err)
-	}
-
-	client, err := client.New(restConfig, client.Options{Mapper: restMapper})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create a client from config: %w", err)
-	}
-	return client, nil
-}
