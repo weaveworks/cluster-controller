@@ -57,10 +57,6 @@ func TestReconcile(t *testing.T) {
 					Name:      "dev",
 					Namespace: testNamespace,
 				}, map[string][]byte{"value": []byte("testing")}),
-				makeTestSecret(types.NamespacedName{
-					Name:      "dev-kubeconfig",
-					Namespace: testNamespace,
-				}, map[string][]byte{"value": []byte("foo")}),
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 		},

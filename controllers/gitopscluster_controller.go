@@ -61,8 +61,8 @@ type GitopsClusterReconciler struct {
 // reconciler ready for use.
 func NewGitopsClusterReconciler(c client.Client, s *runtime.Scheme) *GitopsClusterReconciler {
 	return &GitopsClusterReconciler{
-		Client:       c,
-		Scheme:       s,
+		Client: c,
+		Scheme: s,
 	}
 }
 
@@ -92,18 +92,18 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 		var secret corev1.Secret
 		if err := r.Get(ctx, name, &secret); err != nil {
+			e := fmt.Errorf("failed to get secret %q: %w", name, err)
 			if apierrors.IsNotFound(err) {
 				// TODO: this could _possibly_ be controllable by the
 				// `GitopsCluster` itself.
 				log.Info("waiting for cluster secret to be available")
-				conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, "")
+				conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, e.Error())
 				if err := r.Status().Update(ctx, cluster); err != nil {
 					log.Error(err, "failed to update Cluster status")
 					return ctrl.Result{}, err
 				}
 				return ctrl.Result{RequeueAfter: MissingSecretRequeueTime}, nil
 			}
-			e := fmt.Errorf("failed to get secret %q: %w", name, err)
 			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, e.Error())
 			if err := r.Status().Update(ctx, cluster); err != nil {
 				log.Error(err, "failed to update Cluster status")
@@ -114,22 +114,6 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 
 		log.Info("Secret found", "secret", name)
-
-		ready, err := r.checkControlPlaneReadiness(ctx, *cluster)
-		if err != nil {
-			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, err.Error())
-			if err := r.Status().Update(ctx, cluster); err != nil {
-				log.Error(err, "failed to update Cluster status")
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{}, err
-		}
-
-		if !ready {
-			log.Info("waiting for control plane to be ready", "cluster", cluster.Name)
-
-			return ctrl.Result{RequeueAfter: cluster.ClusterReadinessRequeue()}, nil
-		}
 
 		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.SecretFoundReason, "")
 		if err := r.Status().Update(ctx, cluster); err != nil {
@@ -255,4 +239,3 @@ func (r *GitopsClusterReconciler) requestsForCAPIClusterChange(o client.Object) 
 	}
 	return reqs
 }
-
