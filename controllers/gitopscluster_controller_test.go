@@ -31,6 +31,7 @@ func TestReconcile(t *testing.T) {
 		state        []runtime.Object
 		obj          types.NamespacedName
 		requeueAfter time.Duration
+		finalizers   []string
 		errString    string
 	}{
 		{
@@ -44,6 +45,7 @@ func TestReconcile(t *testing.T) {
 			},
 			obj:          types.NamespacedName{Namespace: testNamespace, Name: testName},
 			requeueAfter: controllers.MissingSecretRequeueTime,
+			finalizers:   []string{},
 		},
 		{
 			name: "secret exists",
@@ -58,7 +60,8 @@ func TestReconcile(t *testing.T) {
 					Namespace: testNamespace,
 				}, map[string][]byte{"value": []byte("testing")}),
 			},
-			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			obj:        types.NamespacedName{Namespace: testNamespace, Name: testName},
+			finalizers: []string{},
 		},
 		{
 			name: "CAPI cluster does not exist",
@@ -69,8 +72,9 @@ func TestReconcile(t *testing.T) {
 					}
 				}),
 			},
-			obj:       types.NamespacedName{Namespace: testNamespace, Name: testName},
-			errString: "failed to get CAPI cluster.*missing.*not found",
+			obj:        types.NamespacedName{Namespace: testNamespace, Name: testName},
+			finalizers: []string{},
+			errString:  "failed to get CAPI cluster.*missing.*not found",
 		},
 		{
 			name: "CAPI cluster exists",
@@ -85,7 +89,8 @@ func TestReconcile(t *testing.T) {
 					Namespace: testNamespace,
 				}),
 			},
-			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			obj:        types.NamespacedName{Namespace: testNamespace, Name: testName},
+			finalizers: []string{"dev"},
 		},
 	}
 
@@ -103,6 +108,12 @@ func TestReconcile(t *testing.T) {
 			}
 			assertErrorMatch(t, tt.errString, err)
 
+			if len(tt.finalizers) != 0 {
+				gitopsCluster := testGetGitopsCluster(t, r.Client, tt.obj)
+				if gitopsCluster.GetFinalizers()[0] != tt.finalizers[0] {
+					t.Fatalf("Getting finalizers got %v, want %v", gitopsCluster.GetFinalizers(), tt.finalizers)
+				}
+			}
 		})
 	}
 }
@@ -189,4 +200,22 @@ func matchErrorString(t *testing.T, s string, e error) bool {
 		t.Fatal(err)
 	}
 	return match
+}
+
+func testGetGitopsCluster(t *testing.T, c client.Client, k client.ObjectKey) *gitopsv1alpha1.GitopsCluster {
+	t.Helper()
+	var cluster gitopsv1alpha1.GitopsCluster
+	if err := c.Get(context.TODO(), k, &cluster); err != nil {
+		t.Fatal(err)
+	}
+	return &cluster
+}
+
+func testGetCAPICluster(t *testing.T, c client.Client, k client.ObjectKey) *clusterv1.Cluster {
+	t.Helper()
+	var cluster clusterv1.Cluster
+	if err := c.Get(context.TODO(), k, &cluster); err != nil {
+		t.Fatal(err)
+	}
+	return &cluster
 }

@@ -30,6 +30,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -61,8 +62,8 @@ type GitopsClusterReconciler struct {
 // reconciler ready for use.
 func NewGitopsClusterReconciler(c client.Client, s *runtime.Scheme) *GitopsClusterReconciler {
 	return &GitopsClusterReconciler{
-		Client:       c,
-		Scheme:       s,
+		Client: c,
+		Scheme: s,
 	}
 }
 
@@ -139,6 +140,16 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 
 		log.Info("CAPI Cluster found", "CAPI cluster", name)
+
+		log.Info("Adding finalizer to Gitops cluster", "Gitops cluster", cluster.GetName())
+
+		controllerutil.AddFinalizer(cluster, capiCluster.GetName())
+
+		log.Info("Setting CAPI Cluster owner reference", "CAPI cluster", name)
+
+		if err := controllerutil.SetOwnerReference(cluster, &capiCluster, r.Scheme); err != nil {
+			return ctrl.Result{}, err
+		}
 
 		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.CAPIClusterFoundReason, "")
 		if err := r.Status().Update(ctx, cluster); err != nil {
@@ -238,4 +249,3 @@ func (r *GitopsClusterReconciler) requestsForCAPIClusterChange(o client.Object) 
 	}
 	return reqs
 }
-
