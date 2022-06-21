@@ -130,9 +130,42 @@ func TestFinalizedDeletion(t *testing.T) {
 			"waiting for gitops cluster to be deleted",
 			"waiting for CAPI cluster to be deleted",
 		},
-		// {"when CAPI cluster has been deleted"},
-		// {"when referenced secret exists"},
-		// {"when referenced secret has been deleted"},
+		{
+			"when CAPI cluster has been deleted",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+				c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{},
+			"",
+			"",
+		},
+		{
+			"when referenced secret exists",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+				c.Spec.SecretRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{makeTestSecret(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"},
+				map[string][]byte{"value": []byte("test")})},
+			"waiting for gitops cluster to be deleted",
+			"waiting for access secret to be deleted"},
+		{
+			"when referenced secret has been deleted",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+				c.Spec.SecretRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{},
+			"",
+			"",
+		},
 	}
 
 	for _, tt := range finalizerTests {
@@ -150,12 +183,11 @@ func TestFinalizedDeletion(t *testing.T) {
 
 			updated := testGetGitopsCluster(t, r.Client, client.ObjectKeyFromObject(tt.gitopsCluster))
 			cond := conditions.Get(updated, meta.ReadyCondition)
-			if cond == nil {
-				t.Fatal("failed to find condition")
-			}
 
-			if cond.Reason != tt.wantStatusReason {
-				t.Fatalf("got condition reason %q, want %q", cond.Reason, tt.wantStatusReason)
+			if cond != nil {
+				if cond.Reason != tt.wantStatusReason {
+					t.Fatalf("got condition reason %q, want %q", cond.Reason, tt.wantStatusReason)
+				}
 			}
 		})
 	}
