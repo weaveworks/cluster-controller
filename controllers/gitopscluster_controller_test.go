@@ -127,9 +127,18 @@ func TestFinalizers(t *testing.T) {
 			[]runtime.Object{makeTestCAPICluster(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"})},
 			true,
 		},
-		// {
-		// 	"cluster referencing secret",
-		// },
+		{
+			"cluster referencing secret",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+				c.Spec.SecretRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{makeTestSecret(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"},
+				map[string][]byte{"value": []byte("test")})},
+			true,
+		},
 		{
 			"deleted gitops cluster",
 			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
