@@ -103,7 +103,9 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			}
 		}
 	} else {
-		return r.reconcileDeletedReferences(ctx, cluster)
+		if controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
+			return r.reconcileDeletedReferences(ctx, cluster)
+		}
 	}
 
 	if cluster.Spec.SecretRef != nil {
