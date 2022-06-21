@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fluxcd/pkg/apis/meta"
+	"github.com/fluxcd/pkg/runtime/conditions"
 	gitopsv1alpha1 "github.com/weaveworks/cluster-controller/api/v1alpha1"
 	"github.com/weaveworks/cluster-controller/controllers"
 	corev1 "k8s.io/api/core/v1"
@@ -108,6 +109,58 @@ func TestReconcile(t *testing.T) {
 	}
 }
 
+func TestFinalizedDeletion(t *testing.T) {
+	finalizerTests := []struct {
+		name           string
+		gitopsCluster  *gitopsv1alpha1.GitopsCluster
+		additionalObjs []runtime.Object
+
+		wantStatusReason string
+		errString        string
+	}{
+		{
+			"when CAPI cluster exists",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+				c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{makeTestCAPICluster(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"})},
+			"waiting for gitops cluster to be deleted",
+			"waiting for CAPI cluster to be deleted",
+		},
+		// {"when CAPI cluster has been deleted"},
+		// {"when referenced secret exists"},
+		// {"when referenced secret has been deleted"},
+	}
+
+	for _, tt := range finalizerTests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := metav1.NewTime(time.Now())
+			tt.gitopsCluster.ObjectMeta.DeletionTimestamp = &now
+			controllerutil.AddFinalizer(tt.gitopsCluster, controllers.GitOpsClusterFinalizer)
+			r := makeTestReconciler(t, append(tt.additionalObjs, tt.gitopsCluster)...)
+
+			_, err := r.Reconcile(context.TODO(), ctrl.Request{NamespacedName: types.NamespacedName{
+				Name:      tt.gitopsCluster.Name,
+				Namespace: tt.gitopsCluster.Namespace,
+			}})
+			assertErrorMatch(t, tt.errString, err)
+
+			updated := testGetGitopsCluster(t, r.Client, client.ObjectKeyFromObject(tt.gitopsCluster))
+			cond := conditions.Get(updated, meta.ReadyCondition)
+			if cond == nil {
+				t.Fatal("failed to find condition")
+			}
+
+			if cond.Reason != tt.wantStatusReason {
+				t.Fatalf("got condition reason %q, want %q", cond.Reason, tt.wantStatusReason)
+			}
+		})
+	}
+}
+
 func TestFinalizers(t *testing.T) {
 	finalizerTests := []struct {
 		name           string
@@ -116,6 +169,9 @@ func TestFinalizers(t *testing.T) {
 
 		wantFinalizer bool
 	}{
+		// {
+		// 	"when cluster has no other reference",
+		// },
 		{
 			"cluster referencing CAPI cluster",
 			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {

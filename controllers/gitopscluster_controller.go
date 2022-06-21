@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -101,6 +102,8 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				return ctrl.Result{}, err
 			}
 		}
+	} else {
+		return r.reconcileDeletedReferences(ctx, cluster)
 	}
 
 	if cluster.Spec.SecretRef != nil {
@@ -158,16 +161,6 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 		log.Info("CAPI Cluster found", "CAPI cluster", name)
 
-		// log.Info("Adding finalizer to Gitops cluster", "Gitops cluster", cluster.GetName())
-
-		// controllerutil.AddFinalizer(cluster, capiCluster.GetName())
-
-		// log.Info("Setting CAPI Cluster owner reference", "CAPI cluster", name)
-
-		// if err := controllerutil.SetOwnerReference(cluster, &capiCluster, r.Scheme); err != nil {
-		// 	return ctrl.Result{}, err
-		// }
-
 		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.CAPIClusterFoundReason, "")
 		if err := r.Status().Update(ctx, cluster); err != nil {
 			log.Error(err, "failed to update Cluster status")
@@ -176,6 +169,26 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *GitopsClusterReconciler) reconcileDeletedReferences(ctx context.Context, gc *gitopsv1alpha1.GitopsCluster) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+	var capiCluster clusterv1.Cluster
+	name := types.NamespacedName{
+		Namespace: gc.GetNamespace(),
+		Name:      gc.Spec.CAPIClusterRef.Name,
+	}
+	if err := r.Get(ctx, name, &capiCluster); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	conditions.MarkFalse(gc, meta.ReadyCondition, "waiting for gitops cluster to be deleted", "")
+	if err := r.Status().Update(ctx, gc); err != nil {
+		log.Error(err, "failed to update Cluster status")
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{}, errors.New("waiting for CAPI cluster to be deleted")
 }
 
 // SetupWithManager sets up the controller with the Manager.
