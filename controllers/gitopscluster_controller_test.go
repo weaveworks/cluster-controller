@@ -15,8 +15,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	clientsetscheme "k8s.io/client-go/kubernetes/scheme"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -31,7 +33,6 @@ func TestReconcile(t *testing.T) {
 		state        []runtime.Object
 		obj          types.NamespacedName
 		requeueAfter time.Duration
-		finalizers   []string
 		errString    string
 	}{
 		{
@@ -45,7 +46,6 @@ func TestReconcile(t *testing.T) {
 			},
 			obj:          types.NamespacedName{Namespace: testNamespace, Name: testName},
 			requeueAfter: controllers.MissingSecretRequeueTime,
-			finalizers:   []string{},
 		},
 		{
 			name: "secret exists",
@@ -60,8 +60,7 @@ func TestReconcile(t *testing.T) {
 					Namespace: testNamespace,
 				}, map[string][]byte{"value": []byte("testing")}),
 			},
-			obj:        types.NamespacedName{Namespace: testNamespace, Name: testName},
-			finalizers: []string{},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 		},
 		{
 			name: "CAPI cluster does not exist",
@@ -72,9 +71,8 @@ func TestReconcile(t *testing.T) {
 					}
 				}),
 			},
-			obj:        types.NamespacedName{Namespace: testNamespace, Name: testName},
-			finalizers: []string{},
-			errString:  "failed to get CAPI cluster.*missing.*not found",
+			obj:       types.NamespacedName{Namespace: testNamespace, Name: testName},
+			errString: "failed to get CAPI cluster.*missing.*not found",
 		},
 		{
 			name: "CAPI cluster exists",
@@ -89,8 +87,7 @@ func TestReconcile(t *testing.T) {
 					Namespace: testNamespace,
 				}),
 			},
-			obj:        types.NamespacedName{Namespace: testNamespace, Name: testName},
-			finalizers: []string{"dev"},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 		},
 	}
 
@@ -107,11 +104,63 @@ func TestReconcile(t *testing.T) {
 				t.Fatalf("Reconcile() RequeueAfter got %v, want %v", result.RequeueAfter, tt.requeueAfter)
 			}
 			assertErrorMatch(t, tt.errString, err)
+		})
+	}
+}
 
-			if len(tt.finalizers) != 0 {
-				gitopsCluster := testGetGitopsCluster(t, r.Client, tt.obj)
-				if gitopsCluster.GetFinalizers()[0] != tt.finalizers[0] {
-					t.Fatalf("Getting finalizers got %v, want %v", gitopsCluster.GetFinalizers(), tt.finalizers)
+func TestFinalizers(t *testing.T) {
+	finalizerTests := []struct {
+		name           string
+		gitopsCluster  *gitopsv1alpha1.GitopsCluster
+		additionalObjs []runtime.Object
+
+		wantFinalizer bool
+	}{
+		{
+			"cluster referencing CAPI cluster",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+				c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{makeTestCAPICluster(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"})},
+			true,
+		},
+		// {
+		// 	"cluster referencing secret",
+		// },
+		{
+			"deleted gitops cluster",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				now := metav1.NewTime(time.Now())
+				c.ObjectMeta.Namespace = "test-ns"
+				c.ObjectMeta.DeletionTimestamp = &now
+				c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{makeTestCAPICluster(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"})},
+			false,
+		},
+	}
+
+	for _, tt := range finalizerTests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := makeTestReconciler(t, append(tt.additionalObjs, tt.gitopsCluster)...)
+
+			_, err := r.Reconcile(context.TODO(), ctrl.Request{NamespacedName: types.NamespacedName{
+				Name:      tt.gitopsCluster.Name,
+				Namespace: tt.gitopsCluster.Namespace,
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if tt.wantFinalizer {
+				updated := testGetGitopsCluster(t, r.Client, client.ObjectKeyFromObject(tt.gitopsCluster))
+				if !controllerutil.ContainsFinalizer(updated, controllers.GitOpsClusterFinalizer) {
+					t.Fatal("cluster HasFinalizer got false, want true")
 				}
 			}
 		})
@@ -205,15 +254,6 @@ func matchErrorString(t *testing.T, s string, e error) bool {
 func testGetGitopsCluster(t *testing.T, c client.Client, k client.ObjectKey) *gitopsv1alpha1.GitopsCluster {
 	t.Helper()
 	var cluster gitopsv1alpha1.GitopsCluster
-	if err := c.Get(context.TODO(), k, &cluster); err != nil {
-		t.Fatal(err)
-	}
-	return &cluster
-}
-
-func testGetCAPICluster(t *testing.T, c client.Client, k client.ObjectKey) *clusterv1.Cluster {
-	t.Helper()
-	var cluster clusterv1.Cluster
 	if err := c.Get(context.TODO(), k, &cluster); err != nil {
 		t.Fatal(err)
 	}

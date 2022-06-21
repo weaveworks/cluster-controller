@@ -38,6 +38,10 @@ import (
 	gitopsv1alpha1 "github.com/weaveworks/cluster-controller/api/v1alpha1"
 )
 
+// GitOpsClusterFinalizer is the finalizer key used to detect when we need to
+// finalize a GitOps cluster.
+const GitOpsClusterFinalizer = "clusters.gitops.weave.works"
+
 const (
 	// SecretNameIndexKey is the key used for indexing secret
 	// resources based on their name.
@@ -84,6 +88,19 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		log.Error(err, "failed to get Cluster")
 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// examine DeletionTimestamp to determine if object is under deletion
+	if cluster.ObjectMeta.DeletionTimestamp.IsZero() {
+		// The object is not being deleted, so if it does not have our finalizer,
+		// then lets add the finalizer and update the object. This is equivalent
+		// registering our finalizer.
+		if !controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
+			controllerutil.AddFinalizer(cluster, GitOpsClusterFinalizer)
+			if err := r.Update(ctx, cluster); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 	}
 
 	if cluster.Spec.SecretRef != nil {
@@ -141,15 +158,15 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 		log.Info("CAPI Cluster found", "CAPI cluster", name)
 
-		log.Info("Adding finalizer to Gitops cluster", "Gitops cluster", cluster.GetName())
+		// log.Info("Adding finalizer to Gitops cluster", "Gitops cluster", cluster.GetName())
 
-		controllerutil.AddFinalizer(cluster, capiCluster.GetName())
+		// controllerutil.AddFinalizer(cluster, capiCluster.GetName())
 
-		log.Info("Setting CAPI Cluster owner reference", "CAPI cluster", name)
+		// log.Info("Setting CAPI Cluster owner reference", "CAPI cluster", name)
 
-		if err := controllerutil.SetOwnerReference(cluster, &capiCluster, r.Scheme); err != nil {
-			return ctrl.Result{}, err
-		}
+		// if err := controllerutil.SetOwnerReference(cluster, &capiCluster, r.Scheme); err != nil {
+		// 	return ctrl.Result{}, err
+		// }
 
 		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.CAPIClusterFoundReason, "")
 		if err := r.Status().Update(ctx, cluster); err != nil {
