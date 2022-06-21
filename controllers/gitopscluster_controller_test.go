@@ -200,6 +200,7 @@ func TestFinalizers(t *testing.T) {
 		additionalObjs []runtime.Object
 
 		wantFinalizer bool
+		errString     string
 	}{
 		// {
 		// 	"when cluster has no other reference",
@@ -214,6 +215,7 @@ func TestFinalizers(t *testing.T) {
 			}),
 			[]runtime.Object{makeTestCAPICluster(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"})},
 			true,
+			"waiting for CAPI cluster to be deleted",
 		},
 		{
 			"cluster referencing secret",
@@ -226,6 +228,7 @@ func TestFinalizers(t *testing.T) {
 			[]runtime.Object{makeTestSecret(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"},
 				map[string][]byte{"value": []byte("test")})},
 			true,
+			"waiting for access secret to be deleted",
 		},
 		{
 			"deleted gitops cluster",
@@ -239,6 +242,7 @@ func TestFinalizers(t *testing.T) {
 			}),
 			[]runtime.Object{makeTestCAPICluster(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"})},
 			false,
+			"",
 		},
 	}
 
@@ -250,7 +254,7 @@ func TestFinalizers(t *testing.T) {
 				Name:      tt.gitopsCluster.Name,
 				Namespace: tt.gitopsCluster.Namespace,
 			}})
-			if err != nil {
+			if err.Error() != tt.errString {
 				t.Fatal(err)
 			}
 
