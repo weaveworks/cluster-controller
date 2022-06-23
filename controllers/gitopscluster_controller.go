@@ -1,12 +1,9 @@
 /*
 Copyright 2022.
-
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
-
     http://www.apache.org/licenses/LICENSE-2.0
-
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -91,82 +88,103 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// examine DeletionTimestamp to determine if object is under deletion
-	if cluster.ObjectMeta.DeletionTimestamp.IsZero() {
-		// The object is not being deleted, so if it does not have our finalizer,
-		// then lets add the finalizer and update the object. This is equivalent
-		// registering our finalizer.
-		if !controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
-			controllerutil.AddFinalizer(cluster, GitOpsClusterFinalizer)
-			if err := r.Update(ctx, cluster); err != nil {
-				return ctrl.Result{}, err
-			}
-		}
-	} else {
-		if controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
-			return r.reconcileDeletedReferences(ctx, cluster)
-		}
-	}
-
 	if cluster.Spec.SecretRef != nil {
-		name := types.NamespacedName{
-			Namespace: cluster.GetNamespace(),
-			Name:      cluster.Spec.SecretRef.Name,
-		}
-		var secret corev1.Secret
-		if err := r.Get(ctx, name, &secret); err != nil {
-			if apierrors.IsNotFound(err) {
-				// TODO: this could _possibly_ be controllable by the
-				// `GitopsCluster` itself.
-				log.Info("waiting for cluster secret to be available")
-				conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, "")
+		// examine DeletionTimestamp to determine if object is under deletion
+		if cluster.ObjectMeta.DeletionTimestamp.IsZero() {
+			name := types.NamespacedName{
+				Namespace: cluster.GetNamespace(),
+				Name:      cluster.Spec.SecretRef.Name,
+			}
+			var secret corev1.Secret
+			if err := r.Get(ctx, name, &secret); err != nil {
+				if apierrors.IsNotFound(err) {
+					// TODO: this could _possibly_ be controllable by the
+					// `GitopsCluster` itself.
+					log.Info("waiting for cluster secret to be available")
+					conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, "")
+					if err := r.Status().Update(ctx, cluster); err != nil {
+						log.Error(err, "failed to update Cluster status")
+						return ctrl.Result{}, err
+					}
+					return ctrl.Result{RequeueAfter: MissingSecretRequeueTime}, nil
+				}
+				e := fmt.Errorf("failed to get secret %q: %w", name, err)
+				conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, e.Error())
 				if err := r.Status().Update(ctx, cluster); err != nil {
 					log.Error(err, "failed to update Cluster status")
 					return ctrl.Result{}, err
 				}
-				return ctrl.Result{RequeueAfter: MissingSecretRequeueTime}, nil
+
+				return ctrl.Result{}, e
 			}
-			e := fmt.Errorf("failed to get secret %q: %w", name, err)
-			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, e.Error())
+
+			log.Info("Secret found", "secret", name)
+
+			// examine DeletionTimestamp to determine if object is under deletion
+			if cluster.ObjectMeta.DeletionTimestamp.IsZero() {
+				// The object is not being deleted, so if it does not have our finalizer,
+				// then lets add the finalizer and update the object. This is equivalent
+				// registering our finalizer.
+				if !controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
+					controllerutil.AddFinalizer(cluster, GitOpsClusterFinalizer)
+					if err := r.Update(ctx, cluster); err != nil {
+						return ctrl.Result{}, err
+					}
+				}
+			}
+
+			conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.SecretFoundReason, "")
 			if err := r.Status().Update(ctx, cluster); err != nil {
 				log.Error(err, "failed to update Cluster status")
 				return ctrl.Result{}, err
 			}
-
-			return ctrl.Result{}, e
-		}
-
-		log.Info("Secret found", "secret", name)
-		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.SecretFoundReason, "")
-		if err := r.Status().Update(ctx, cluster); err != nil {
-			log.Error(err, "failed to update Cluster status")
-			return ctrl.Result{}, err
+		} else {
+			if controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
+				return r.reconcileDeletedReferences(ctx, cluster)
+			}
 		}
 	}
 
 	if cluster.Spec.CAPIClusterRef != nil {
-		name := types.NamespacedName{
-			Namespace: cluster.GetNamespace(),
-			Name:      cluster.Spec.CAPIClusterRef.Name,
-		}
-		var capiCluster clusterv1.Cluster
-		if err := r.Get(ctx, name, &capiCluster); err != nil {
-			e := fmt.Errorf("failed to get CAPI cluster %q: %w", name, err)
-			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForCAPIClusterReason, e.Error())
+		// examine DeletionTimestamp to determine if object is under deletion
+		if cluster.ObjectMeta.DeletionTimestamp.IsZero() {
+			name := types.NamespacedName{
+				Namespace: cluster.GetNamespace(),
+				Name:      cluster.Spec.CAPIClusterRef.Name,
+			}
+			var capiCluster clusterv1.Cluster
+			if err := r.Get(ctx, name, &capiCluster); err != nil {
+				e := fmt.Errorf("failed to get CAPI cluster %q: %w", name, err)
+				conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForCAPIClusterReason, e.Error())
+				if err := r.Status().Update(ctx, cluster); err != nil {
+					log.Error(err, "failed to update Cluster status")
+					return ctrl.Result{}, err
+				}
+
+				return ctrl.Result{}, e
+			}
+
+			log.Info("CAPI Cluster found", "CAPI cluster", name)
+
+			// The object is not being deleted, so if it does not have our finalizer,
+			// then lets add the finalizer and update the object. This is equivalent
+			// registering our finalizer.
+			if !controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
+				controllerutil.AddFinalizer(cluster, GitOpsClusterFinalizer)
+				if err := r.Update(ctx, cluster); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+
+			conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.CAPIClusterFoundReason, "")
 			if err := r.Status().Update(ctx, cluster); err != nil {
 				log.Error(err, "failed to update Cluster status")
 				return ctrl.Result{}, err
 			}
-
-			return ctrl.Result{}, e
-		}
-
-		log.Info("CAPI Cluster found", "CAPI cluster", name)
-
-		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.CAPIClusterFoundReason, "")
-		if err := r.Status().Update(ctx, cluster); err != nil {
-			log.Error(err, "failed to update Cluster status")
-			return ctrl.Result{}, err
+		} else {
+			if controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
+				return r.reconcileDeletedReferences(ctx, cluster)
+			}
 		}
 	}
 
@@ -193,7 +211,9 @@ func (r *GitopsClusterReconciler) reconcileDeletedReferences(ctx context.Context
 		}
 
 		return ctrl.Result{}, errors.New("waiting for CAPI cluster to be deleted")
-	} else if gc.Spec.SecretRef != nil {
+	}
+
+	if gc.Spec.SecretRef != nil {
 		var secret corev1.Secret
 		name := types.NamespacedName{
 			Namespace: gc.GetNamespace(),

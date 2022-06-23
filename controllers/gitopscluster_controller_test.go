@@ -200,11 +200,15 @@ func TestFinalizers(t *testing.T) {
 		additionalObjs []runtime.Object
 
 		wantFinalizer bool
-		errString     string
 	}{
-		// {
-		// 	"when cluster has no other reference",
-		// },
+		{
+			"when cluster has no other reference",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+			}),
+			[]runtime.Object{},
+			false,
+		},
 		{
 			"cluster referencing CAPI cluster",
 			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
@@ -215,7 +219,6 @@ func TestFinalizers(t *testing.T) {
 			}),
 			[]runtime.Object{makeTestCAPICluster(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"})},
 			true,
-			"",
 		},
 		{
 			"cluster referencing secret",
@@ -228,7 +231,6 @@ func TestFinalizers(t *testing.T) {
 			[]runtime.Object{makeTestSecret(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"},
 				map[string][]byte{"value": []byte("test")})},
 			true,
-			"",
 		},
 		{
 			"deleted gitops cluster",
@@ -242,7 +244,6 @@ func TestFinalizers(t *testing.T) {
 			}),
 			[]runtime.Object{makeTestCAPICluster(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"})},
 			false,
-			"",
 		},
 	}
 
@@ -254,7 +255,9 @@ func TestFinalizers(t *testing.T) {
 				Name:      tt.gitopsCluster.Name,
 				Namespace: tt.gitopsCluster.Namespace,
 			}})
-			assertErrorMatch(t, tt.errString, err)
+			if err != nil {
+				t.Fatal(err)
+			}
 
 			if tt.wantFinalizer {
 				updated := testGetGitopsCluster(t, r.Client, client.ObjectKeyFromObject(tt.gitopsCluster))
