@@ -11,6 +11,7 @@ import (
 	gitopsv1alpha1 "github.com/weaveworks/cluster-controller/api/v1alpha1"
 	"github.com/weaveworks/cluster-controller/controllers"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -117,6 +118,7 @@ func TestFinalizedDeletion(t *testing.T) {
 
 		wantStatusReason string
 		errString        string
+		clusterExists    bool
 	}{
 		{
 			"when CAPI cluster exists",
@@ -127,8 +129,9 @@ func TestFinalizedDeletion(t *testing.T) {
 				}
 			}),
 			[]runtime.Object{makeTestCAPICluster(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"})},
-			"waiting for gitops cluster to be deleted",
+			gitopsv1alpha1.WaitingForCAPIClusterDeletionReason,
 			"waiting for CAPI cluster to be deleted",
+			true,
 		},
 		{
 			"when CAPI cluster has been deleted",
@@ -141,6 +144,7 @@ func TestFinalizedDeletion(t *testing.T) {
 			[]runtime.Object{},
 			"",
 			"",
+			false,
 		},
 		{
 			"when referenced secret exists",
@@ -152,8 +156,10 @@ func TestFinalizedDeletion(t *testing.T) {
 			}),
 			[]runtime.Object{makeTestSecret(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"},
 				map[string][]byte{"value": []byte("test")})},
-			"waiting for gitops cluster to be deleted",
-			"waiting for access secret to be deleted"},
+			gitopsv1alpha1.WaitingForSecretDeletionReason,
+			"waiting for access secret to be deleted",
+			true,
+		},
 		{
 			"when referenced secret has been deleted",
 			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
@@ -165,6 +171,7 @@ func TestFinalizedDeletion(t *testing.T) {
 			[]runtime.Object{},
 			"",
 			"",
+			false,
 		},
 	}
 
@@ -181,12 +188,20 @@ func TestFinalizedDeletion(t *testing.T) {
 			}})
 			assertErrorMatch(t, tt.errString, err)
 
-			updated := testGetGitopsCluster(t, r.Client, client.ObjectKeyFromObject(tt.gitopsCluster))
-			cond := conditions.Get(updated, meta.ReadyCondition)
+			if tt.clusterExists {
+				updated := testGetGitopsCluster(t, r.Client, client.ObjectKeyFromObject(tt.gitopsCluster))
+				cond := conditions.Get(updated, meta.ReadyCondition)
 
-			if cond != nil {
-				if cond.Reason != tt.wantStatusReason {
-					t.Fatalf("got condition reason %q, want %q", cond.Reason, tt.wantStatusReason)
+				if cond != nil {
+					if cond.Reason != tt.wantStatusReason {
+						t.Fatalf("got condition reason %q, want %q", cond.Reason, tt.wantStatusReason)
+					}
+				}
+			} else {
+				var cluster gitopsv1alpha1.GitopsCluster
+				err := r.Client.Get(context.TODO(), client.ObjectKeyFromObject(tt.gitopsCluster), &cluster)
+				if !apierrors.IsNotFound(err) {
+					t.Fatalf("expected cluster to not exist but got cluster %v", cluster)
 				}
 			}
 		})
@@ -278,12 +293,17 @@ func makeTestReconciler(t *testing.T, objs ...runtime.Object) controllers.Gitops
 }
 
 func makeTestClientAndScheme(t *testing.T, objs ...runtime.Object) (*runtime.Scheme, client.Client) {
+	s := makeClusterScheme(t)
+	return s, fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(objs...).Build()
+}
+
+func makeClusterScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
 	assertNoError(t, clientsetscheme.AddToScheme(s))
 	assertNoError(t, gitopsv1alpha1.AddToScheme(s))
 	assertNoError(t, clusterv1.AddToScheme(s))
-	return s, fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(objs...).Build()
+	return s
 }
 
 func assertNoError(t *testing.T, err error) {
