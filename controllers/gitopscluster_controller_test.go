@@ -7,16 +7,20 @@ import (
 	"time"
 
 	"github.com/fluxcd/pkg/apis/meta"
+	"github.com/fluxcd/pkg/runtime/conditions"
 	gitopsv1alpha1 "github.com/weaveworks/cluster-controller/api/v1alpha1"
 	"github.com/weaveworks/cluster-controller/controllers"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientsetscheme "k8s.io/client-go/kubernetes/scheme"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -102,7 +106,180 @@ func TestReconcile(t *testing.T) {
 				t.Fatalf("Reconcile() RequeueAfter got %v, want %v", result.RequeueAfter, tt.requeueAfter)
 			}
 			assertErrorMatch(t, tt.errString, err)
+		})
+	}
+}
 
+func TestFinalizedDeletion(t *testing.T) {
+	finalizerTests := []struct {
+		name           string
+		gitopsCluster  *gitopsv1alpha1.GitopsCluster
+		additionalObjs []runtime.Object
+
+		wantStatusReason string
+		errString        string
+		clusterExists    bool
+	}{
+		{
+			"when CAPI cluster exists",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+				c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{makeTestCAPICluster(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"})},
+			gitopsv1alpha1.WaitingForCAPIClusterDeletionReason,
+			"waiting for CAPI cluster to be deleted",
+			true,
+		},
+		{
+			"when CAPI cluster has been deleted",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+				c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{},
+			"",
+			"",
+			false,
+		},
+		{
+			"when referenced secret exists",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+				c.Spec.SecretRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{makeTestSecret(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"},
+				map[string][]byte{"value": []byte("test")})},
+			gitopsv1alpha1.WaitingForSecretDeletionReason,
+			"waiting for access secret to be deleted",
+			true,
+		},
+		{
+			"when referenced secret has been deleted",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+				c.Spec.SecretRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{},
+			"",
+			"",
+			false,
+		},
+	}
+
+	for _, tt := range finalizerTests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := metav1.NewTime(time.Now())
+			tt.gitopsCluster.ObjectMeta.DeletionTimestamp = &now
+			controllerutil.AddFinalizer(tt.gitopsCluster, controllers.GitOpsClusterFinalizer)
+			r := makeTestReconciler(t, append(tt.additionalObjs, tt.gitopsCluster)...)
+
+			_, err := r.Reconcile(context.TODO(), ctrl.Request{NamespacedName: types.NamespacedName{
+				Name:      tt.gitopsCluster.Name,
+				Namespace: tt.gitopsCluster.Namespace,
+			}})
+			assertErrorMatch(t, tt.errString, err)
+
+			if tt.clusterExists {
+				updated := testGetGitopsCluster(t, r.Client, client.ObjectKeyFromObject(tt.gitopsCluster))
+				cond := conditions.Get(updated, meta.ReadyCondition)
+
+				if cond != nil {
+					if cond.Reason != tt.wantStatusReason {
+						t.Fatalf("got condition reason %q, want %q", cond.Reason, tt.wantStatusReason)
+					}
+				}
+			} else {
+				var cluster gitopsv1alpha1.GitopsCluster
+				err := r.Client.Get(context.TODO(), client.ObjectKeyFromObject(tt.gitopsCluster), &cluster)
+				if !apierrors.IsNotFound(err) {
+					t.Fatalf("expected cluster to not exist but got cluster %v", cluster)
+				}
+			}
+		})
+	}
+}
+
+func TestFinalizers(t *testing.T) {
+	finalizerTests := []struct {
+		name           string
+		gitopsCluster  *gitopsv1alpha1.GitopsCluster
+		additionalObjs []runtime.Object
+
+		wantFinalizer bool
+	}{
+		{
+			"when cluster has no other reference",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+			}),
+			[]runtime.Object{},
+			false,
+		},
+		{
+			"cluster referencing CAPI cluster",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+				c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{makeTestCAPICluster(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"})},
+			true,
+		},
+		{
+			"cluster referencing secret",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+				c.Spec.SecretRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{makeTestSecret(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"},
+				map[string][]byte{"value": []byte("test")})},
+			true,
+		},
+		{
+			"deleted gitops cluster",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				now := metav1.NewTime(time.Now())
+				c.ObjectMeta.Namespace = "test-ns"
+				c.ObjectMeta.DeletionTimestamp = &now
+				c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{makeTestCAPICluster(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"})},
+			false,
+		},
+	}
+
+	for _, tt := range finalizerTests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := makeTestReconciler(t, append(tt.additionalObjs, tt.gitopsCluster)...)
+
+			_, err := r.Reconcile(context.TODO(), ctrl.Request{NamespacedName: types.NamespacedName{
+				Name:      tt.gitopsCluster.Name,
+				Namespace: tt.gitopsCluster.Namespace,
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if tt.wantFinalizer {
+				updated := testGetGitopsCluster(t, r.Client, client.ObjectKeyFromObject(tt.gitopsCluster))
+				if !controllerutil.ContainsFinalizer(updated, controllers.GitOpsClusterFinalizer) {
+					t.Fatal("cluster HasFinalizer got false, want true")
+				}
+			}
 		})
 	}
 }
@@ -116,12 +293,17 @@ func makeTestReconciler(t *testing.T, objs ...runtime.Object) controllers.Gitops
 }
 
 func makeTestClientAndScheme(t *testing.T, objs ...runtime.Object) (*runtime.Scheme, client.Client) {
+	s := makeClusterScheme(t)
+	return s, fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(objs...).Build()
+}
+
+func makeClusterScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
 	assertNoError(t, clientsetscheme.AddToScheme(s))
 	assertNoError(t, gitopsv1alpha1.AddToScheme(s))
 	assertNoError(t, clusterv1.AddToScheme(s))
-	return s, fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(objs...).Build()
+	return s
 }
 
 func assertNoError(t *testing.T, err error) {
@@ -189,4 +371,13 @@ func matchErrorString(t *testing.T, s string, e error) bool {
 		t.Fatal(err)
 	}
 	return match
+}
+
+func testGetGitopsCluster(t *testing.T, c client.Client, k client.ObjectKey) *gitopsv1alpha1.GitopsCluster {
+	t.Helper()
+	var cluster gitopsv1alpha1.GitopsCluster
+	if err := c.Get(context.TODO(), k, &cluster); err != nil {
+		t.Fatal(err)
+	}
+	return &cluster
 }

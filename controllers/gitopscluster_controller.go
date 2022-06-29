@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -30,12 +31,17 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	gitopsv1alpha1 "github.com/weaveworks/cluster-controller/api/v1alpha1"
 )
+
+// GitOpsClusterFinalizer is the finalizer key used to detect when we need to
+// finalize a GitOps cluster.
+const GitOpsClusterFinalizer = "clusters.gitops.weave.works"
 
 const (
 	// SecretNameIndexKey is the key used for indexing secret
@@ -80,9 +86,31 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Fetch the Cluster
 	cluster := &gitopsv1alpha1.GitopsCluster{}
 	if err := r.Get(ctx, req.NamespacedName, cluster); err != nil {
-		log.Error(err, "failed to get Cluster")
-
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// examine DeletionTimestamp to determine if object is under deletion
+	if cluster.ObjectMeta.DeletionTimestamp.IsZero() {
+		if cluster.Spec.SecretRef != nil || cluster.Spec.CAPIClusterRef != nil {
+			if !controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
+				controllerutil.AddFinalizer(cluster, GitOpsClusterFinalizer)
+				if err := r.Update(ctx, cluster); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+		}
+	} else {
+		if controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
+			err := r.reconcileDeletedReferences(ctx, cluster)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			controllerutil.RemoveFinalizer(cluster, GitOpsClusterFinalizer)
+			if err := r.Update(ctx, cluster); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
+		}
 	}
 
 	if cluster.Spec.SecretRef != nil {
@@ -149,6 +177,52 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *GitopsClusterReconciler) reconcileDeletedReferences(ctx context.Context, gc *gitopsv1alpha1.GitopsCluster) error {
+	log := log.FromContext(ctx)
+
+	if gc.Spec.CAPIClusterRef != nil {
+		var capiCluster clusterv1.Cluster
+		name := types.NamespacedName{
+			Namespace: gc.GetNamespace(),
+			Name:      gc.Spec.CAPIClusterRef.Name,
+		}
+		if err := r.Get(ctx, name, &capiCluster); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+
+		conditions.MarkFalse(gc, meta.ReadyCondition,
+			gitopsv1alpha1.WaitingForCAPIClusterDeletionReason,
+			"waiting for CAPI cluster to be deleted")
+		if err := r.Status().Update(ctx, gc); err != nil {
+			log.Error(err, "failed to update Cluster status")
+			return err
+		}
+		return errors.New("waiting for CAPI cluster to be deleted")
+	}
+
+	if gc.Spec.SecretRef != nil {
+		var secret corev1.Secret
+		name := types.NamespacedName{
+			Namespace: gc.GetNamespace(),
+			Name:      gc.Spec.SecretRef.Name,
+		}
+		if err := r.Get(ctx, name, &secret); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+
+		conditions.MarkFalse(gc, meta.ReadyCondition,
+			gitopsv1alpha1.WaitingForSecretDeletionReason,
+			"waiting for access secret to be deleted")
+		if err := r.Status().Update(ctx, gc); err != nil {
+			log.Error(err, "failed to update Cluster status")
+			return err
+		}
+		return errors.New("waiting for access secret to be deleted")
+	}
+
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
