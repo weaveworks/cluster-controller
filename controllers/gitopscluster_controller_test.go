@@ -31,11 +31,12 @@ const (
 
 func TestReconcile(t *testing.T) {
 	tests := []struct {
-		name         string
-		state        []runtime.Object
-		obj          types.NamespacedName
-		requeueAfter time.Duration
-		errString    string
+		name              string
+		state             []runtime.Object
+		obj               types.NamespacedName
+		requeueAfter      time.Duration
+		errString         string
+		wantStatusMessage string
 	}{
 		{
 			name: "secret does not exist",
@@ -46,8 +47,9 @@ func TestReconcile(t *testing.T) {
 					}
 				}),
 			},
-			obj:          types.NamespacedName{Namespace: testNamespace, Name: testName},
-			requeueAfter: controllers.MissingSecretRequeueTime,
+			obj:               types.NamespacedName{Namespace: testNamespace, Name: testName},
+			requeueAfter:      controllers.MissingSecretRequeueTime,
+			wantStatusMessage: "failed to get secret \"testing/missing\": secrets \"missing\" not found",
 		},
 		{
 			name: "secret exists",
@@ -62,7 +64,8 @@ func TestReconcile(t *testing.T) {
 					Namespace: testNamespace,
 				}, map[string][]byte{"value": []byte("testing")}),
 			},
-			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			obj:               types.NamespacedName{Namespace: testNamespace, Name: testName},
+			wantStatusMessage: "",
 		},
 		{
 			name: "CAPI cluster does not exist",
@@ -73,8 +76,9 @@ func TestReconcile(t *testing.T) {
 					}
 				}),
 			},
-			obj:       types.NamespacedName{Namespace: testNamespace, Name: testName},
-			errString: "failed to get CAPI cluster.*missing.*not found",
+			obj:               types.NamespacedName{Namespace: testNamespace, Name: testName},
+			errString:         "failed to get CAPI cluster.*missing.*not found",
+			wantStatusMessage: "failed to get CAPI cluster \"testing/missing\": clusters.cluster.x-k8s.io \"missing\" not found",
 		},
 		{
 			name: "CAPI cluster exists",
@@ -89,7 +93,8 @@ func TestReconcile(t *testing.T) {
 					Namespace: testNamespace,
 				}),
 			},
-			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			obj:               types.NamespacedName{Namespace: testNamespace, Name: testName},
+			wantStatusMessage: "",
 		},
 	}
 
@@ -106,6 +111,16 @@ func TestReconcile(t *testing.T) {
 				t.Fatalf("Reconcile() RequeueAfter got %v, want %v", result.RequeueAfter, tt.requeueAfter)
 			}
 			assertErrorMatch(t, tt.errString, err)
+
+			clsObjectKey := types.NamespacedName{Namespace: testNamespace, Name: testName}
+			cls := testGetGitopsCluster(t, r.Client, clsObjectKey)
+			cond := conditions.Get(cls, meta.ReadyCondition)
+
+			if cond != nil {
+				if cond.Message != tt.wantStatusMessage {
+					t.Fatalf("got condition reason %q, want %q", cond.Message, tt.wantStatusMessage)
+				}
+			}
 		})
 	}
 }
