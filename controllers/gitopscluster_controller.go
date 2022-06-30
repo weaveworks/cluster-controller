@@ -120,18 +120,18 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 		var secret corev1.Secret
 		if err := r.Get(ctx, name, &secret); err != nil {
+			e := fmt.Errorf("failed to get secret %q: %w", name, err)
 			if apierrors.IsNotFound(err) {
 				// TODO: this could _possibly_ be controllable by the
 				// `GitopsCluster` itself.
 				log.Info("waiting for cluster secret to be available")
-				conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, "")
+				conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, e.Error())
 				if err := r.Status().Update(ctx, cluster); err != nil {
 					log.Error(err, "failed to update Cluster status")
 					return ctrl.Result{}, err
 				}
 				return ctrl.Result{RequeueAfter: MissingSecretRequeueTime}, nil
 			}
-			e := fmt.Errorf("failed to get secret %q: %w", name, err)
 			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, e.Error())
 			if err := r.Status().Update(ctx, cluster); err != nil {
 				log.Error(err, "failed to update Cluster status")
