@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0](https://github.com/weaveworks/cluster-controller/compare/v1.1.0...v1.2.0) (2022-06-30)
+
+
+### Features
+
+* add finalizer and owner reference ([c555ddd](https://github.com/weaveworks/cluster-controller/commit/c555ddd1d8843fda0f43c3cfaf7a4d3010508c64))
+* update secretRef status check ([#15](https://github.com/weaveworks/cluster-controller/issues/15)) ([45e7298](https://github.com/weaveworks/cluster-controller/commit/45e7298d0628ef59c6533d114d204590b32d6722))
+
+
+### Bug Fixes
+
+* remove cp readiness check ([f1d1a26](https://github.com/weaveworks/cluster-controller/commit/f1d1a26c3a5b006e2d668169105039776c69d30e))
+
 ## [1.1.0](https://github.com/weaveworks/cluster-controller/compare/v1.0.0...v1.1.0) (2022-05-09)
 
 
