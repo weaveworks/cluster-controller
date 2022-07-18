@@ -36,6 +36,7 @@ func TestReconcile(t *testing.T) {
 		obj               types.NamespacedName
 		requeueAfter      time.Duration
 		errString         string
+		wantStatus        metav1.ConditionStatus
 		wantStatusMessage string
 	}{
 		{
@@ -49,6 +50,7 @@ func TestReconcile(t *testing.T) {
 			},
 			obj:               types.NamespacedName{Namespace: testNamespace, Name: testName},
 			requeueAfter:      controllers.MissingSecretRequeueTime,
+			wantStatus:        "False",
 			wantStatusMessage: "failed to get secret \"testing/missing\": secrets \"missing\" not found",
 		},
 		{
@@ -64,8 +66,8 @@ func TestReconcile(t *testing.T) {
 					Namespace: testNamespace,
 				}, map[string][]byte{"value": []byte("testing")}),
 			},
-			obj:               types.NamespacedName{Namespace: testNamespace, Name: testName},
-			wantStatusMessage: "",
+			obj:        types.NamespacedName{Namespace: testNamespace, Name: testName},
+			wantStatus: "True",
 		},
 		{
 			name: "CAPI cluster does not exist",
@@ -78,10 +80,11 @@ func TestReconcile(t *testing.T) {
 			},
 			obj:               types.NamespacedName{Namespace: testNamespace, Name: testName},
 			errString:         "failed to get CAPI cluster.*missing.*not found",
+			wantStatus:        "False",
 			wantStatusMessage: "failed to get CAPI cluster \"testing/missing\": clusters.cluster.x-k8s.io \"missing\" not found",
 		},
 		{
-			name: "CAPI cluster exists",
+			name: "CAPI cluster exists but is not ready",
 			state: []runtime.Object{
 				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
 					c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
@@ -94,7 +97,26 @@ func TestReconcile(t *testing.T) {
 				}),
 			},
 			obj:               types.NamespacedName{Namespace: testNamespace, Name: testName},
-			wantStatusMessage: "",
+			wantStatus:        "False",
+			wantStatusMessage: "Waiting for ControlPlaneReady status",
+		},
+		{
+			name: "CAPI cluster exists and is ready",
+			state: []runtime.Object{
+				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+					c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
+						Name: "dev",
+					}
+				}),
+				makeTestCAPICluster(types.NamespacedName{
+					Name:      "dev",
+					Namespace: testNamespace,
+				}, func(c *clusterv1.Cluster) {
+					c.Status.ControlPlaneReady = true
+				}),
+			},
+			obj:        types.NamespacedName{Namespace: testNamespace, Name: testName},
+			wantStatus: "True",
 		},
 	}
 
@@ -116,10 +138,16 @@ func TestReconcile(t *testing.T) {
 			cls := testGetGitopsCluster(t, r.Client, clsObjectKey)
 			cond := conditions.Get(cls, meta.ReadyCondition)
 
-			if cond != nil {
-				if cond.Message != tt.wantStatusMessage {
-					t.Fatalf("got condition reason %q, want %q", cond.Message, tt.wantStatusMessage)
-				}
+			if cond == nil {
+				t.Fatalf("Ready condition was nil")
+			}
+
+			if cond.Message != tt.wantStatusMessage {
+				t.Fatalf("got condition reason %q, want %q", cond.Message, tt.wantStatusMessage)
+			}
+
+			if cond.Status != tt.wantStatus {
+				t.Fatalf("got condition status %q, want %q", cond.Status, tt.wantStatus)
 			}
 		})
 	}

@@ -169,7 +169,16 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 		log.Info("CAPI Cluster found", "CAPI cluster", name)
 
-		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.CAPIClusterFoundReason, "")
+		if !capiCluster.Status.ControlPlaneReady {
+			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForControlPlaneReadyStatusReason, "Waiting for ControlPlaneReady status")
+			if err := r.Status().Update(ctx, cluster); err != nil {
+				log.Error(err, "failed to update Cluster status")
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
+		}
+
+		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.ControlPlaneReadyStatusReason, "")
 		if err := r.Status().Update(ctx, cluster); err != nil {
 			log.Error(err, "failed to update Cluster status")
 			return ctrl.Result{}, err
