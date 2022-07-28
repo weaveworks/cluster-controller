@@ -3,6 +3,7 @@ package controllers_test
 import (
 	"context"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,7 +123,9 @@ func TestReconcile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := makeTestReconciler(t, tt.state...)
+			controllers.CAPIEnabled = true
+			s := makeClusterScheme(t, true)
+			r := makeTestReconciler(t, s, tt.state...)
 			r.ConfigParser = func(b []byte) (client.Client, error) {
 				return r.Client, nil
 			}
@@ -223,7 +226,8 @@ func TestFinalizedDeletion(t *testing.T) {
 			now := metav1.NewTime(time.Now())
 			tt.gitopsCluster.ObjectMeta.DeletionTimestamp = &now
 			controllerutil.AddFinalizer(tt.gitopsCluster, controllers.GitOpsClusterFinalizer)
-			r := makeTestReconciler(t, append(tt.additionalObjs, tt.gitopsCluster)...)
+			s := makeClusterScheme(t, true)
+			r := makeTestReconciler(t, s, append(tt.additionalObjs, tt.gitopsCluster)...)
 
 			_, err := r.Reconcile(context.TODO(), ctrl.Request{NamespacedName: types.NamespacedName{
 				Name:      tt.gitopsCluster.Name,
@@ -279,6 +283,17 @@ func TestFinalizers(t *testing.T) {
 			true,
 		},
 		{
+			"cluster referencing CAPI cluster but capi-enabled is false",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+				c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{makeTestCAPICluster(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"})},
+			true,
+		},
+		{
 			"cluster referencing secret",
 			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
 				c.ObjectMeta.Namespace = "test-ns"
@@ -307,7 +322,9 @@ func TestFinalizers(t *testing.T) {
 
 	for _, tt := range finalizerTests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := makeTestReconciler(t, append(tt.additionalObjs, tt.gitopsCluster)...)
+			controllers.CAPIEnabled = true
+			s := makeClusterScheme(t, true)
+			r := makeTestReconciler(t, s, append(tt.additionalObjs, tt.gitopsCluster)...)
 
 			_, err := r.Reconcile(context.TODO(), ctrl.Request{NamespacedName: types.NamespacedName{
 				Name:      tt.gitopsCluster.Name,
@@ -327,25 +344,53 @@ func TestFinalizers(t *testing.T) {
 	}
 }
 
-func makeTestReconciler(t *testing.T, objs ...runtime.Object) controllers.GitopsClusterReconciler {
-	s, tc := makeTestClientAndScheme(t, objs...)
+func TestCapiNotEnabled(t *testing.T) {
+	state := []runtime.Object{
+		makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+			c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
+				Name: "dev",
+			}
+		}),
+	}
+
+	controllers.CAPIEnabled = false
+	s := makeClusterScheme(t, false)
+	r := makeTestReconciler(t, s, state...)
+
+	_, err := r.Reconcile(context.TODO(), ctrl.Request{NamespacedName: types.NamespacedName{
+		Name:      testName,
+		Namespace: testNamespace,
+	}})
+	if err == nil {
+		t.Fatal("expected error but got nil")
+	}
+	if !strings.Contains(err.Error(), "CAPI component is not installed") {
+		t.Fatalf("expected error to contain 'CAPI is not enabled' but got %q", err.Error())
+	}
+}
+
+func makeTestReconciler(t *testing.T, s *runtime.Scheme, objs ...runtime.Object) controllers.GitopsClusterReconciler {
+	s, tc := makeTestClientAndScheme(t, s, objs...)
 	return controllers.GitopsClusterReconciler{
 		Client: tc,
 		Scheme: s,
 	}
 }
 
-func makeTestClientAndScheme(t *testing.T, objs ...runtime.Object) (*runtime.Scheme, client.Client) {
-	s := makeClusterScheme(t)
+func makeTestClientAndScheme(t *testing.T, s *runtime.Scheme, objs ...runtime.Object) (*runtime.Scheme, client.Client) {
 	return s, fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(objs...).Build()
 }
 
-func makeClusterScheme(t *testing.T) *runtime.Scheme {
+func makeClusterScheme(t *testing.T, isCapiEnabled bool) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
 	assertNoError(t, clientsetscheme.AddToScheme(s))
 	assertNoError(t, gitopsv1alpha1.AddToScheme(s))
-	assertNoError(t, clusterv1.AddToScheme(s))
+
+	if isCapiEnabled {
+		assertNoError(t, clusterv1.AddToScheme(s))
+	}
+
 	return s
 }
 

@@ -63,6 +63,8 @@ type GitopsClusterReconciler struct {
 	ConfigParser func(b []byte) (client.Client, error)
 }
 
+var CAPIEnabled bool
+
 // NewGitopsClusterReconciler creates and returns a configured
 // reconciler ready for use.
 func NewGitopsClusterReconciler(c client.Client, s *runtime.Scheme) *GitopsClusterReconciler {
@@ -91,7 +93,7 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// examine DeletionTimestamp to determine if object is under deletion
 	if cluster.ObjectMeta.DeletionTimestamp.IsZero() {
-		if cluster.Spec.SecretRef != nil || cluster.Spec.CAPIClusterRef != nil {
+		if cluster.Spec.SecretRef != nil || (cluster.Spec.CAPIClusterRef != nil && CAPIEnabled) {
 			if !controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
 				controllerutil.AddFinalizer(cluster, GitOpsClusterFinalizer)
 				if err := r.Update(ctx, cluster); err != nil {
@@ -151,37 +153,43 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if cluster.Spec.CAPIClusterRef != nil {
-		name := types.NamespacedName{
-			Namespace: cluster.GetNamespace(),
-			Name:      cluster.Spec.CAPIClusterRef.Name,
-		}
-		var capiCluster clusterv1.Cluster
-		if err := r.Get(ctx, name, &capiCluster); err != nil {
-			e := fmt.Errorf("failed to get CAPI cluster %q: %w", name, err)
-			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForCAPIClusterReason, e.Error())
-			if err := r.Status().Update(ctx, cluster); err != nil {
-				log.Error(err, "failed to update Cluster status")
-				return ctrl.Result{}, err
-			}
-
-			return ctrl.Result{}, e
-		}
-
-		log.Info("CAPI Cluster found", "CAPI cluster", name)
-
-		if !capiCluster.Status.ControlPlaneReady {
-			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForControlPlaneReadyStatusReason, "Waiting for ControlPlaneReady status")
-			if err := r.Status().Update(ctx, cluster); err != nil {
-				log.Error(err, "failed to update Cluster status")
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{}, nil
-		}
-
-		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.ControlPlaneReadyStatusReason, "")
-		if err := r.Status().Update(ctx, cluster); err != nil {
-			log.Error(err, "failed to update Cluster status")
+		if !CAPIEnabled {
+			err := errors.New("CAPI component is not installed")
+			log.Error(err, "failed to get CAPI cluster")
 			return ctrl.Result{}, err
+		} else {
+			name := types.NamespacedName{
+				Namespace: cluster.GetNamespace(),
+				Name:      cluster.Spec.CAPIClusterRef.Name,
+			}
+			var capiCluster clusterv1.Cluster
+			if err := r.Get(ctx, name, &capiCluster); err != nil {
+				e := fmt.Errorf("failed to get CAPI cluster %q: %w", name, err)
+				conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForCAPIClusterReason, e.Error())
+				if err := r.Status().Update(ctx, cluster); err != nil {
+					log.Error(err, "failed to update Cluster status")
+					return ctrl.Result{}, err
+				}
+
+				return ctrl.Result{}, e
+			}
+
+			log.Info("CAPI Cluster found", "CAPI cluster", name)
+
+			if !capiCluster.Status.ControlPlaneReady {
+				conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForControlPlaneReadyStatusReason, "Waiting for ControlPlaneReady status")
+				if err := r.Status().Update(ctx, cluster); err != nil {
+					log.Error(err, "failed to update Cluster status")
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{}, nil
+			}
+
+			conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.ControlPlaneReadyStatusReason, "")
+			if err := r.Status().Update(ctx, cluster); err != nil {
+				log.Error(err, "failed to update Cluster status")
+				return ctrl.Result{}, err
+			}
 		}
 	}
 
@@ -244,17 +252,27 @@ func (r *GitopsClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return fmt.Errorf("failed setting index fields: %w", err)
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&gitopsv1alpha1.GitopsCluster{}).
-		Watches(
-			&source.Kind{Type: &corev1.Secret{}},
-			handler.EnqueueRequestsFromMapFunc(r.requestsForSecretChange),
-		).
-		Watches(
-			&source.Kind{Type: &clusterv1.Cluster{}},
-			handler.EnqueueRequestsFromMapFunc(r.requestsForCAPIClusterChange),
-		).
-		Complete(r)
+	if CAPIEnabled {
+		return ctrl.NewControllerManagedBy(mgr).
+			For(&gitopsv1alpha1.GitopsCluster{}).
+			Watches(
+				&source.Kind{Type: &corev1.Secret{}},
+				handler.EnqueueRequestsFromMapFunc(r.requestsForSecretChange),
+			).
+			Watches(
+				&source.Kind{Type: &clusterv1.Cluster{}},
+				handler.EnqueueRequestsFromMapFunc(r.requestsForCAPIClusterChange),
+			).
+			Complete(r)
+	} else {
+		return ctrl.NewControllerManagedBy(mgr).
+			For(&gitopsv1alpha1.GitopsCluster{}).
+			Watches(
+				&source.Kind{Type: &corev1.Secret{}},
+				handler.EnqueueRequestsFromMapFunc(r.requestsForSecretChange),
+			).
+			Complete(r)
+	}
 }
 
 func (r *GitopsClusterReconciler) indexGitopsClusterBySecretName(o client.Object) []string {
