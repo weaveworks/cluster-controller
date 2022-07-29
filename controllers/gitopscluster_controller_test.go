@@ -3,7 +3,6 @@ package controllers_test
 import (
 	"context"
 	"regexp"
-	"strings"
 	"testing"
 	"time"
 
@@ -123,9 +122,10 @@ func TestReconcile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controllers.CAPIEnabled = true
-			s := makeClusterScheme(t, true)
-			r := makeTestReconciler(t, s, tt.state...)
+			opts := controllers.Options{
+				CAPIEnabled: true,
+			}
+			r := makeTestReconciler(t, opts, tt.state...)
 			r.ConfigParser = func(b []byte) (client.Client, error) {
 				return r.Client, nil
 			}
@@ -226,8 +226,10 @@ func TestFinalizedDeletion(t *testing.T) {
 			now := metav1.NewTime(time.Now())
 			tt.gitopsCluster.ObjectMeta.DeletionTimestamp = &now
 			controllerutil.AddFinalizer(tt.gitopsCluster, controllers.GitOpsClusterFinalizer)
-			s := makeClusterScheme(t, true)
-			r := makeTestReconciler(t, s, append(tt.additionalObjs, tt.gitopsCluster)...)
+			opts := controllers.Options{
+				CAPIEnabled: true,
+			}
+			r := makeTestReconciler(t, opts, append(tt.additionalObjs, tt.gitopsCluster)...)
 
 			_, err := r.Reconcile(context.TODO(), ctrl.Request{NamespacedName: types.NamespacedName{
 				Name:      tt.gitopsCluster.Name,
@@ -322,9 +324,10 @@ func TestFinalizers(t *testing.T) {
 
 	for _, tt := range finalizerTests {
 		t.Run(tt.name, func(t *testing.T) {
-			controllers.CAPIEnabled = true
-			s := makeClusterScheme(t, true)
-			r := makeTestReconciler(t, s, append(tt.additionalObjs, tt.gitopsCluster)...)
+			opts := controllers.Options{
+				CAPIEnabled: true,
+			}
+			r := makeTestReconciler(t, opts, append(tt.additionalObjs, tt.gitopsCluster)...)
 
 			_, err := r.Reconcile(context.TODO(), ctrl.Request{NamespacedName: types.NamespacedName{
 				Name:      tt.gitopsCluster.Name,
@@ -353,41 +356,47 @@ func TestCapiNotEnabled(t *testing.T) {
 		}),
 	}
 
-	controllers.CAPIEnabled = false
-	s := makeClusterScheme(t, false)
-	r := makeTestReconciler(t, s, state...)
+	opts := controllers.Options{
+		CAPIEnabled: false,
+	}
+	r := makeTestReconciler(t, opts, state...)
 
 	_, err := r.Reconcile(context.TODO(), ctrl.Request{NamespacedName: types.NamespacedName{
 		Name:      testName,
 		Namespace: testNamespace,
 	}})
-	if err == nil {
-		t.Fatal("expected error but got nil")
-	}
-	if !strings.Contains(err.Error(), "CAPI component is not installed") {
-		t.Fatalf("expected error to contain 'CAPI is not enabled' but got %q", err.Error())
+	assertNoError(t, err)
+
+	clsObjectKey := types.NamespacedName{Namespace: testNamespace, Name: testName}
+	cls := testGetGitopsCluster(t, r.Client, clsObjectKey)
+	cond := conditions.Get(cls, meta.ReadyCondition)
+
+	if cond != nil {
+		t.Fatalf("Expected Ready condition to be nil")
 	}
 }
 
-func makeTestReconciler(t *testing.T, s *runtime.Scheme, objs ...runtime.Object) controllers.GitopsClusterReconciler {
-	s, tc := makeTestClientAndScheme(t, s, objs...)
+func makeTestReconciler(t *testing.T, opts controllers.Options, objs ...runtime.Object) controllers.GitopsClusterReconciler {
+	s, tc := makeTestClientAndScheme(t, opts, objs...)
 	return controllers.GitopsClusterReconciler{
-		Client: tc,
-		Scheme: s,
+		Client:  tc,
+		Scheme:  s,
+		Options: opts,
 	}
 }
 
-func makeTestClientAndScheme(t *testing.T, s *runtime.Scheme, objs ...runtime.Object) (*runtime.Scheme, client.Client) {
+func makeTestClientAndScheme(t *testing.T, opts controllers.Options, objs ...runtime.Object) (*runtime.Scheme, client.Client) {
+	s := makeClusterScheme(t, opts)
 	return s, fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(objs...).Build()
 }
 
-func makeClusterScheme(t *testing.T, isCapiEnabled bool) *runtime.Scheme {
+func makeClusterScheme(t *testing.T, opts controllers.Options) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
 	assertNoError(t, clientsetscheme.AddToScheme(s))
 	assertNoError(t, gitopsv1alpha1.AddToScheme(s))
 
-	if isCapiEnabled {
+	if opts.CAPIEnabled {
 		assertNoError(t, clusterv1.AddToScheme(s))
 	}
 
