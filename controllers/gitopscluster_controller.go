@@ -97,7 +97,22 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Check if CAPI component is enabled
 	if cluster.Spec.CAPIClusterRef != nil && !r.Options.CAPIEnabled {
-		log.Info("CAPI Cluster found but CAPI support is disabled, ignoring.", "CAPI cluster", cluster.Spec.CAPIClusterRef.Name)
+		log.Info(
+			"CAPIClusterRef found but CAPI support is disabled, ignoring.",
+			"CAPI cluster",
+			cluster.Spec.CAPIClusterRef.Name)
+
+		e := fmt.Errorf(
+			"CAPIClusterRef %q found but CAPI support is disabled",
+			cluster.Spec.CAPIClusterRef.Name)
+
+		conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.CAPINotEnable, e.Error())
+
+		if err := r.Status().Update(ctx, cluster); err != nil {
+			log.Error(err, "failed to update Cluster status")
+			return ctrl.Result{}, err
+		}
+
 		return ctrl.Result{}, nil
 	}
 

@@ -2,6 +2,7 @@ package controllers_test
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"testing"
 	"time"
@@ -34,6 +35,7 @@ func TestReconcile(t *testing.T) {
 		name              string
 		state             []runtime.Object
 		obj               types.NamespacedName
+		opts              controllers.Options
 		requeueAfter      time.Duration
 		errString         string
 		wantStatus        metav1.ConditionStatus
@@ -48,7 +50,10 @@ func TestReconcile(t *testing.T) {
 					}
 				}),
 			},
-			obj:               types.NamespacedName{Namespace: testNamespace, Name: testName},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled: true,
+			},
 			requeueAfter:      controllers.MissingSecretRequeueTime,
 			wantStatus:        "False",
 			wantStatusMessage: "failed to get secret \"testing/missing\": secrets \"missing\" not found",
@@ -66,7 +71,10 @@ func TestReconcile(t *testing.T) {
 					Namespace: testNamespace,
 				}, map[string][]byte{"value": []byte("testing")}),
 			},
-			obj:        types.NamespacedName{Namespace: testNamespace, Name: testName},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled: true,
+			},
 			wantStatus: "True",
 		},
 		{
@@ -78,7 +86,10 @@ func TestReconcile(t *testing.T) {
 					}
 				}),
 			},
-			obj:               types.NamespacedName{Namespace: testNamespace, Name: testName},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled: true,
+			},
 			errString:         "failed to get CAPI cluster.*missing.*not found",
 			wantStatus:        "False",
 			wantStatusMessage: "failed to get CAPI cluster \"testing/missing\": clusters.cluster.x-k8s.io \"missing\" not found",
@@ -96,7 +107,10 @@ func TestReconcile(t *testing.T) {
 					Namespace: testNamespace,
 				}),
 			},
-			obj:               types.NamespacedName{Namespace: testNamespace, Name: testName},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled: true,
+			},
 			wantStatus:        "False",
 			wantStatusMessage: "Waiting for ControlPlaneReady status",
 		},
@@ -115,17 +129,33 @@ func TestReconcile(t *testing.T) {
 					c.Status.ControlPlaneReady = true
 				}),
 			},
-			obj:        types.NamespacedName{Namespace: testNamespace, Name: testName},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled: true,
+			},
 			wantStatus: "True",
+		},
+		{
+			name: "CAPI compnent is not enabled",
+			state: []runtime.Object{
+				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+					c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
+						Name: "dev",
+					}
+				}),
+			},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled: false,
+			},
+			wantStatus:        "False",
+			wantStatusMessage: "CAPIClusterRef \"dev\" found but CAPI support is disabled",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			opts := controllers.Options{
-				CAPIEnabled: true,
-			}
-			r := makeTestReconciler(t, opts, tt.state...)
+			r := makeTestReconciler(t, tt.opts, tt.state...)
 			r.ConfigParser = func(b []byte) (client.Client, error) {
 				return r.Client, nil
 			}
@@ -146,6 +176,7 @@ func TestReconcile(t *testing.T) {
 			}
 
 			if cond.Message != tt.wantStatusMessage {
+				fmt.Println(cond.Message)
 				t.Fatalf("got condition reason %q, want %q", cond.Message, tt.wantStatusMessage)
 			}
 
@@ -344,35 +375,6 @@ func TestFinalizers(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestCapiNotEnabled(t *testing.T) {
-	state := []runtime.Object{
-		makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
-			c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
-				Name: "dev",
-			}
-		}),
-	}
-
-	opts := controllers.Options{
-		CAPIEnabled: false,
-	}
-	r := makeTestReconciler(t, opts, state...)
-
-	_, err := r.Reconcile(context.TODO(), ctrl.Request{NamespacedName: types.NamespacedName{
-		Name:      testName,
-		Namespace: testNamespace,
-	}})
-	assertNoError(t, err)
-
-	clsObjectKey := types.NamespacedName{Namespace: testNamespace, Name: testName}
-	cls := testGetGitopsCluster(t, r.Client, clsObjectKey)
-	cond := conditions.Get(cls, meta.ReadyCondition)
-
-	if cond != nil {
-		t.Fatalf("Expected Ready condition to be nil")
 	}
 }
 
