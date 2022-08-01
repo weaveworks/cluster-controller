@@ -2,7 +2,6 @@ package controllers_test
 
 import (
 	"context"
-	"fmt"
 	"regexp"
 	"testing"
 	"time"
@@ -176,7 +175,6 @@ func TestReconcile(t *testing.T) {
 			}
 
 			if cond.Message != tt.wantStatusMessage {
-				fmt.Println(cond.Message)
 				t.Fatalf("got condition reason %q, want %q", cond.Message, tt.wantStatusMessage)
 			}
 
