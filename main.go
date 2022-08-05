@@ -72,7 +72,7 @@ func main() {
 		utilruntime.Must(clusterv1.AddToScheme(scheme))
 	}
 
-	setupLog.Info("capi enabled", options.CAPIEnabled)
+	setupLog.Info("capi support enabled", "enabled", options.CAPIEnabled)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
