@@ -34,6 +34,7 @@ func TestReconcile(t *testing.T) {
 		name              string
 		state             []runtime.Object
 		obj               types.NamespacedName
+		opts              controllers.Options
 		requeueAfter      time.Duration
 		errString         string
 		wantStatus        metav1.ConditionStatus
@@ -48,7 +49,10 @@ func TestReconcile(t *testing.T) {
 					}
 				}),
 			},
-			obj:               types.NamespacedName{Namespace: testNamespace, Name: testName},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled: true,
+			},
 			requeueAfter:      controllers.MissingSecretRequeueTime,
 			wantStatus:        "False",
 			wantStatusMessage: "failed to get secret \"testing/missing\": secrets \"missing\" not found",
@@ -66,7 +70,10 @@ func TestReconcile(t *testing.T) {
 					Namespace: testNamespace,
 				}, map[string][]byte{"value": []byte("testing")}),
 			},
-			obj:        types.NamespacedName{Namespace: testNamespace, Name: testName},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled: true,
+			},
 			wantStatus: "True",
 		},
 		{
@@ -78,7 +85,10 @@ func TestReconcile(t *testing.T) {
 					}
 				}),
 			},
-			obj:               types.NamespacedName{Namespace: testNamespace, Name: testName},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled: true,
+			},
 			errString:         "failed to get CAPI cluster.*missing.*not found",
 			wantStatus:        "False",
 			wantStatusMessage: "failed to get CAPI cluster \"testing/missing\": clusters.cluster.x-k8s.io \"missing\" not found",
@@ -96,7 +106,10 @@ func TestReconcile(t *testing.T) {
 					Namespace: testNamespace,
 				}),
 			},
-			obj:               types.NamespacedName{Namespace: testNamespace, Name: testName},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled: true,
+			},
 			wantStatus:        "False",
 			wantStatusMessage: "Waiting for ControlPlaneReady status",
 		},
@@ -115,14 +128,33 @@ func TestReconcile(t *testing.T) {
 					c.Status.ControlPlaneReady = true
 				}),
 			},
-			obj:        types.NamespacedName{Namespace: testNamespace, Name: testName},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled: true,
+			},
 			wantStatus: "True",
+		},
+		{
+			name: "CAPI compnent is not enabled",
+			state: []runtime.Object{
+				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+					c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
+						Name: "dev",
+					}
+				}),
+			},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled: false,
+			},
+			wantStatus:        "False",
+			wantStatusMessage: "CAPIClusterRef \"dev\" found but CAPI support is disabled",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := makeTestReconciler(t, tt.state...)
+			r := makeTestReconciler(t, tt.opts, tt.state...)
 			r.ConfigParser = func(b []byte) (client.Client, error) {
 				return r.Client, nil
 			}
@@ -223,7 +255,10 @@ func TestFinalizedDeletion(t *testing.T) {
 			now := metav1.NewTime(time.Now())
 			tt.gitopsCluster.ObjectMeta.DeletionTimestamp = &now
 			controllerutil.AddFinalizer(tt.gitopsCluster, controllers.GitOpsClusterFinalizer)
-			r := makeTestReconciler(t, append(tt.additionalObjs, tt.gitopsCluster)...)
+			opts := controllers.Options{
+				CAPIEnabled: true,
+			}
+			r := makeTestReconciler(t, opts, append(tt.additionalObjs, tt.gitopsCluster)...)
 
 			_, err := r.Reconcile(context.TODO(), ctrl.Request{NamespacedName: types.NamespacedName{
 				Name:      tt.gitopsCluster.Name,
@@ -279,6 +314,17 @@ func TestFinalizers(t *testing.T) {
 			true,
 		},
 		{
+			"cluster referencing CAPI cluster but capi-enabled is false",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+				c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{makeTestCAPICluster(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"})},
+			true,
+		},
+		{
 			"cluster referencing secret",
 			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
 				c.ObjectMeta.Namespace = "test-ns"
@@ -307,7 +353,10 @@ func TestFinalizers(t *testing.T) {
 
 	for _, tt := range finalizerTests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := makeTestReconciler(t, append(tt.additionalObjs, tt.gitopsCluster)...)
+			opts := controllers.Options{
+				CAPIEnabled: true,
+			}
+			r := makeTestReconciler(t, opts, append(tt.additionalObjs, tt.gitopsCluster)...)
 
 			_, err := r.Reconcile(context.TODO(), ctrl.Request{NamespacedName: types.NamespacedName{
 				Name:      tt.gitopsCluster.Name,
@@ -327,25 +376,30 @@ func TestFinalizers(t *testing.T) {
 	}
 }
 
-func makeTestReconciler(t *testing.T, objs ...runtime.Object) controllers.GitopsClusterReconciler {
-	s, tc := makeTestClientAndScheme(t, objs...)
+func makeTestReconciler(t *testing.T, opts controllers.Options, objs ...runtime.Object) controllers.GitopsClusterReconciler {
+	s, tc := makeTestClientAndScheme(t, opts, objs...)
 	return controllers.GitopsClusterReconciler{
-		Client: tc,
-		Scheme: s,
+		Client:  tc,
+		Scheme:  s,
+		Options: opts,
 	}
 }
 
-func makeTestClientAndScheme(t *testing.T, objs ...runtime.Object) (*runtime.Scheme, client.Client) {
-	s := makeClusterScheme(t)
+func makeTestClientAndScheme(t *testing.T, opts controllers.Options, objs ...runtime.Object) (*runtime.Scheme, client.Client) {
+	s := makeClusterScheme(t, opts)
 	return s, fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(objs...).Build()
 }
 
-func makeClusterScheme(t *testing.T) *runtime.Scheme {
+func makeClusterScheme(t *testing.T, opts controllers.Options) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
 	assertNoError(t, clientsetscheme.AddToScheme(s))
 	assertNoError(t, gitopsv1alpha1.AddToScheme(s))
-	assertNoError(t, clusterv1.AddToScheme(s))
+
+	if opts.CAPIEnabled {
+		assertNoError(t, clusterv1.AddToScheme(s))
+	}
+
 	return s
 }
 

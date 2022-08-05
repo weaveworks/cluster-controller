@@ -41,9 +41,10 @@ var (
 	setupLog = ctrl.Log.WithName("setup")
 )
 
+var options controllers.Options
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(clusterv1.AddToScheme(scheme))
 	utilruntime.Must(gitopsv1alpha1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
@@ -57,6 +58,8 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
+	flag.BoolVar(&options.CAPIEnabled, "capi-enabled", true, "Enable CAPI support.")
+
 	opts := zap.Options{
 		Development: true,
 	}
@@ -64,6 +67,12 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	if options.CAPIEnabled {
+		utilruntime.Must(clusterv1.AddToScheme(scheme))
+	}
+
+	setupLog.Info("capi support enabled", "enabled", options.CAPIEnabled)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
@@ -78,7 +87,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = controllers.NewGitopsClusterReconciler(mgr.GetClient(), mgr.GetScheme()).SetupWithManager(mgr); err != nil {
+	if err = controllers.NewGitopsClusterReconciler(mgr.GetClient(), mgr.GetScheme(), options).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GitopsCluster")
 		os.Exit(1)
 	}

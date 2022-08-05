@@ -19,4 +19,7 @@ const (
 	// WaitingForSecretDeletionReason signals that this cluster has been
 	// deleted, but the referenced secret still exists.
 	WaitingForSecretDeletionReason string = "WaitingForSecretDeletion"
+
+	// CAPINotEnabled signals that CAPI component is not installed.
+	CAPINotEnabled string = "CAPINotEnabled"
 )

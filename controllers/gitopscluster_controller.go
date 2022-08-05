@@ -60,15 +60,21 @@ const (
 type GitopsClusterReconciler struct {
 	client.Client
 	Scheme       *runtime.Scheme
+	Options      Options
 	ConfigParser func(b []byte) (client.Client, error)
+}
+
+type Options struct {
+	CAPIEnabled bool
 }
 
 // NewGitopsClusterReconciler creates and returns a configured
 // reconciler ready for use.
-func NewGitopsClusterReconciler(c client.Client, s *runtime.Scheme) *GitopsClusterReconciler {
+func NewGitopsClusterReconciler(c client.Client, s *runtime.Scheme, opts Options) *GitopsClusterReconciler {
 	return &GitopsClusterReconciler{
-		Client: c,
-		Scheme: s,
+		Client:  c,
+		Scheme:  s,
+		Options: opts,
 	}
 }
 
@@ -87,6 +93,27 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	cluster := &gitopsv1alpha1.GitopsCluster{}
 	if err := r.Get(ctx, req.NamespacedName, cluster); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// Check if CAPI component is enabled
+	if cluster.Spec.CAPIClusterRef != nil && !r.Options.CAPIEnabled {
+		log.Info(
+			"CAPIClusterRef found but CAPI support is disabled, ignoring.",
+			"CAPI cluster",
+			cluster.Spec.CAPIClusterRef.Name)
+
+		e := fmt.Errorf(
+			"CAPIClusterRef %q found but CAPI support is disabled",
+			cluster.Spec.CAPIClusterRef.Name)
+
+		conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.CAPINotEnabled, e.Error())
+
+		if err := r.Status().Update(ctx, cluster); err != nil {
+			log.Error(err, "failed to update Cluster status")
+			return ctrl.Result{}, err
+		}
+
+		return ctrl.Result{}, nil
 	}
 
 	// examine DeletionTimestamp to determine if object is under deletion
@@ -244,17 +271,22 @@ func (r *GitopsClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return fmt.Errorf("failed setting index fields: %w", err)
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&gitopsv1alpha1.GitopsCluster{}).
 		Watches(
 			&source.Kind{Type: &corev1.Secret{}},
 			handler.EnqueueRequestsFromMapFunc(r.requestsForSecretChange),
-		).
-		Watches(
+		)
+
+	if r.Options.CAPIEnabled {
+		builder.Watches(
 			&source.Kind{Type: &clusterv1.Cluster{}},
 			handler.EnqueueRequestsFromMapFunc(r.requestsForCAPIClusterChange),
-		).
-		Complete(r)
+		)
+
+	}
+
+	return builder.Complete(r)
 }
 
 func (r *GitopsClusterReconciler) indexGitopsClusterBySecretName(o client.Object) []string {
