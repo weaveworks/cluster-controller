@@ -21,5 +21,5 @@ const (
 	WaitingForSecretDeletionReason string = "WaitingForSecretDeletion"
 
 	// CAPINotEnable signals that CAPI component is not installed.
-	CAPINotEnable string = "CAPINotEnable"
+	CAPINotEnabled string = "CAPINotEnabled"
 )
