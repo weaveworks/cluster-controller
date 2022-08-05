@@ -20,6 +20,6 @@ const (
 	// deleted, but the referenced secret still exists.
 	WaitingForSecretDeletionReason string = "WaitingForSecretDeletion"
 
-	// CAPINotEnable signals that CAPI component is not installed.
+	// CAPINotEnabled signals that CAPI component is not installed.
 	CAPINotEnabled string = "CAPINotEnabled"
 )

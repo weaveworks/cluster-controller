@@ -106,7 +106,7 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"CAPIClusterRef %q found but CAPI support is disabled",
 			cluster.Spec.CAPIClusterRef.Name)
 
-		conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.CAPINotEnable, e.Error())
+		conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.CAPINotEnabled, e.Error())
 
 		if err := r.Status().Update(ctx, cluster); err != nil {
 			log.Error(err, "failed to update Cluster status")
