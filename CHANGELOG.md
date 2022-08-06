@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/weaveworks/cluster-controller/compare/v1.2.0...v1.3.0) (2022-08-05)
+
+
+### Features
+
+* add capi-enabled flag ([8a16203](https://github.com/weaveworks/cluster-controller/commit/8a16203d67591365b499ba2225eaac761e80a32a))
+
 ## [1.2.0](https://github.com/weaveworks/cluster-controller/compare/v1.1.0...v1.2.0) (2022-06-30)
 
 
