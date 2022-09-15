@@ -196,8 +196,17 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 		log.Info("CAPI Cluster found", "CAPI cluster", name)
 
+		updated := false
 		if !capiCluster.Status.ControlPlaneReady {
 			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForControlPlaneReadyStatusReason, "Waiting for ControlPlaneReady status")
+			updated = true
+		}
+		if clusterv1.ClusterPhase(capiCluster.Status.Phase) == clusterv1.ClusterPhaseProvisioned {
+			conditions.MarkTrue(cluster, gitopsv1alpha1.ClusterProvisionedCondition, gitopsv1alpha1.ClusterProvisionedReason, "CAPI Cluster has been provisioned")
+			updated = true
+		}
+
+		if updated {
 			if err := r.Status().Update(ctx, cluster); err != nil {
 				log.Error(err, "failed to update Cluster status")
 				return ctrl.Result{}, err
