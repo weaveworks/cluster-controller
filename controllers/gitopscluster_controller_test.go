@@ -80,6 +80,26 @@ func TestReconcile(t *testing.T) {
 			wantStatus:    "True",
 		},
 		{
+			name: "non-CAPI cluster has provisioned annotation",
+			state: []runtime.Object{
+				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+					c.ObjectMeta.Annotations = map[string]string{
+						controllers.GitOpsClusterProvisionedAnnotation: "true",
+					}
+					c.Spec.SecretRef = &meta.LocalObjectReference{
+						Name: "dev",
+					}
+				}),
+			},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			// The referenced secret doesn't exist so we should still check for
+			// it.
+			requeueAfter:      controllers.MissingSecretRequeueTime,
+			wantCondition:     gitopsv1alpha1.ClusterProvisionedCondition,
+			wantStatus:        "True",
+			wantStatusMessage: "Cluster Provisioned annotation detected",
+		},
+		{
 			name: "CAPI cluster does not exist",
 			state: []runtime.Object{
 				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
