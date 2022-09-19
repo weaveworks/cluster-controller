@@ -26,6 +26,7 @@ import (
 	"github.com/fluxcd/pkg/runtime/conditions"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -42,6 +43,10 @@ import (
 // GitOpsClusterFinalizer is the finalizer key used to detect when we need to
 // finalize a GitOps cluster.
 const GitOpsClusterFinalizer = "clusters.gitops.weave.works"
+
+// GitOpsClusterProvisionedAnnotation if applied to a GitOpsCluster indicates
+// that it should have a ready Provisioned condition.
+const GitOpsClusterProvisionedAnnotation = "clusters.gitops.weave.works/provisioned"
 
 const (
 	// SecretNameIndexKey is the key used for indexing secret
@@ -145,6 +150,11 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			Namespace: cluster.GetNamespace(),
 			Name:      cluster.Spec.SecretRef.Name,
 		}
+
+		if metav1.HasAnnotation(cluster.ObjectMeta, GitOpsClusterProvisionedAnnotation) {
+			conditions.MarkTrue(cluster, gitopsv1alpha1.ClusterProvisionedCondition, gitopsv1alpha1.ClusterProvisionedReason, "Cluster Provisioned annotation detected")
+		}
+
 		var secret corev1.Secret
 		if err := r.Get(ctx, name, &secret); err != nil {
 			e := fmt.Errorf("failed to get secret %q: %w", name, err)
@@ -196,8 +206,17 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 		log.Info("CAPI Cluster found", "CAPI cluster", name)
 
+		updated := false
 		if !capiCluster.Status.ControlPlaneReady {
 			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForControlPlaneReadyStatusReason, "Waiting for ControlPlaneReady status")
+			updated = true
+		}
+		if clusterv1.ClusterPhase(capiCluster.Status.Phase) == clusterv1.ClusterPhaseProvisioned {
+			conditions.MarkTrue(cluster, gitopsv1alpha1.ClusterProvisionedCondition, gitopsv1alpha1.ClusterProvisionedReason, "CAPI Cluster has been provisioned")
+			updated = true
+		}
+
+		if updated {
 			if err := r.Status().Update(ctx, cluster); err != nil {
 				log.Error(err, "failed to update Cluster status")
 				return ctrl.Result{}, err

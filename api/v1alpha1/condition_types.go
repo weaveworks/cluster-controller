@@ -23,3 +23,16 @@ const (
 	// CAPINotEnabled signals that CAPI component is not installed.
 	CAPINotEnabled string = "CAPINotEnabled"
 )
+
+const (
+	// ClusterProvisionedCondition is a condition when CAPI clusters are
+	// provisioned.
+	//
+	// This indicates that the cluster has been bootstrapped, but the
+	// control-plane may not yet be ready.
+	ClusterProvisionedCondition string = "ClusterProvisioned"
+
+	// ClusterProvisionedReason is the reason for the provisioned state being
+	// set.
+	ClusterProvisionedReason string = "ClusterProvisioned"
+)
