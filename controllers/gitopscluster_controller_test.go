@@ -174,6 +174,7 @@ func TestReconcile(t *testing.T) {
 					Namespace: testNamespace,
 				}, func(c *clusterv1.Cluster) {
 					c.Status.ControlPlaneReady = true
+					c.Status.SetTypedPhase(clusterv1.ClusterPhaseProvisioned)
 				}),
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
