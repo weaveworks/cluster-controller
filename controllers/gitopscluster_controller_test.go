@@ -3,6 +3,7 @@ package controllers_test
 import (
 	"context"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientsetscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/clientcmd"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -219,9 +221,54 @@ func TestReconcile(t *testing.T) {
 			opts: controllers.Options{
 				CAPIEnabled: true,
 			},
-			requeueAfter:  1 * time.Minute,
-			wantCondition: gitopsv1alpha1.ClusterConnectivity,
-			wantStatus:    "True",
+			requeueAfter:      1 * time.Minute,
+			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
+			wantStatus:        "True",
+			wantStatusMessage: "cluster connectivity is ok",
+		},
+		{
+			name: "verify connectivity failed to read secret",
+			state: []runtime.Object{
+				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+					c.Spec.SecretRef = &meta.LocalObjectReference{
+						Name: "dev",
+					}
+				}),
+				makeTestSecret(types.NamespacedName{
+					Name:      "dev",
+					Namespace: testNamespace,
+				}, map[string][]byte{"value": []byte("foo")}),
+			},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled: true,
+			},
+			requeueAfter:      1 * time.Minute,
+			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
+			wantStatus:        "False",
+			wantStatusMessage: "failed creating rest config from secret: couldn't get version/kind; json parse error: json: cannot unmarshal string into Go value of type struct { APIVersion string \"json:\\\"apiVersion,omitempty\\\"\"; Kind string \"json:\\\"kind,omitempty\\\"\" }",
+		},
+		{
+			name: "verify connectivity failed to connect",
+			state: []runtime.Object{
+				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+					c.Spec.SecretRef = &meta.LocalObjectReference{
+						Name: "dev",
+					}
+				}),
+				makeTestSecret(types.NamespacedName{
+					Name:      "dev",
+					Namespace: testNamespace,
+				}, map[string][]byte{"value": kubeconfigWithError(t)}),
+			},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled: true,
+			},
+			requeueAfter:      1 * time.Minute,
+			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
+			wantStatus:        "False",
+			wantStatusMessage: "failed connecting to the cluster: the server rejected our request for an unknown reason",
 		},
 	}
 
@@ -553,4 +600,16 @@ func assertClusterStatus(t *testing.T, cls *gitopsv1alpha1.GitopsCluster, condTy
 	if cond.Message != msg {
 		t.Fatalf("got condition reason %q, want %q", cond.Message, msg)
 	}
+}
+
+func kubeconfigWithError(t *testing.T) []byte {
+	clientConfig, err := clientcmd.Load(kubeConfig)
+	assertNoError(t, err)
+
+	clientConfig.Clusters["envtest"].Server = strings.ReplaceAll(clientConfig.Clusters["envtest"].Server, "https", "http")
+
+	data, err := clientcmd.Write(*clientConfig)
+	assertNoError(t, err)
+
+	return data
 }
