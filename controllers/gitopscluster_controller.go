@@ -85,7 +85,7 @@ func NewGitopsClusterReconciler(c client.Client, s *runtime.Scheme, opts Options
 		Client:            c,
 		Scheme:            s,
 		Options:           opts,
-		connectivityCheck: make(map[string]time.Time),
+		connectivityCheck: map[string]time.Time{},
 	}
 }
 

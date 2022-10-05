@@ -76,6 +76,7 @@ func TestReconcile(t *testing.T) {
 			opts: controllers.Options{
 				CAPIEnabled: true,
 			},
+			requeueAfter:  1 * time.Minute,
 			wantCondition: meta.ReadyCondition,
 			wantStatus:    "True",
 		},
@@ -200,6 +201,27 @@ func TestReconcile(t *testing.T) {
 			wantCondition:     meta.ReadyCondition,
 			wantStatus:        "False",
 			wantStatusMessage: "CAPIClusterRef \"dev\" found but CAPI support is disabled",
+		},
+		{
+			name: "verify connectivity to the cluster",
+			state: []runtime.Object{
+				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+					c.Spec.SecretRef = &meta.LocalObjectReference{
+						Name: "dev",
+					}
+				}),
+				makeTestSecret(types.NamespacedName{
+					Name:      "dev",
+					Namespace: testNamespace,
+				}, map[string][]byte{"value": kubeConfig}),
+			},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled: true,
+			},
+			requeueAfter:  1 * time.Minute,
+			wantCondition: gitopsv1alpha1.ClusterConnectivity,
+			wantStatus:    "True",
 		},
 	}
 
@@ -417,11 +439,7 @@ func TestFinalizers(t *testing.T) {
 
 func makeTestReconciler(t *testing.T, opts controllers.Options, objs ...runtime.Object) controllers.GitopsClusterReconciler {
 	s, tc := makeTestClientAndScheme(t, opts, objs...)
-	return controllers.GitopsClusterReconciler{
-		Client:  tc,
-		Scheme:  s,
-		Options: opts,
-	}
+	return *controllers.NewGitopsClusterReconciler(tc, s, opts)
 }
 
 func makeTestClientAndScheme(t *testing.T, opts controllers.Options, objs ...runtime.Object) (*runtime.Scheme, client.Client) {

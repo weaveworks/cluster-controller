@@ -14,19 +14,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package controllers_test
 
 import (
+	"context"
+	"log"
+	"os"
 	"path/filepath"
 	"testing"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	"github.com/weaveworks/cluster-controller/controllers"
 	"k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	gitopsv1alpha1 "github.com/weaveworks/cluster-controller/api/v1alpha1"
 	//+kubebuilder:scaffold:imports
@@ -35,41 +38,75 @@ import (
 // These tests use Ginkgo (BDD-style Go testing framework). Refer to
 // http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
 
+var k8sManager ctrl.Manager
 var k8sClient client.Client
 var testEnv *envtest.Environment
+var kubeConfig []byte
 
-func TestAPIs(t *testing.T) {
-	RegisterFailHandler(Fail)
-
-	RunSpecs(t, "Controller Suite")
-}
-
-var _ = BeforeSuite(func() {
-	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
-
-	By("bootstrapping test environment")
+func TestMain(m *testing.M) {
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths:     []string{filepath.Join("..", "config", "crd", "bases")},
 		ErrorIfCRDPathMissing: true,
 	}
 
 	cfg, err := testEnv.Start()
-	Expect(err).NotTo(HaveOccurred())
-	Expect(cfg).NotTo(BeNil())
+	if err != nil {
+		log.Fatalf("starting test env failed: %s", err)
+	}
+
+	user, err := testEnv.ControlPlane.AddUser(envtest.User{
+		Name:   "envtest-admin",
+		Groups: []string{"system:masters"},
+	}, nil)
+	if err != nil {
+		log.Fatalf("add user failed: %s", err)
+	}
+
+	kubeConfig, err = user.KubeConfig()
+	if err != nil {
+		log.Fatalf("get user kubeconfig failed: %s", err)
+	}
 
 	err = gitopsv1alpha1.AddToScheme(scheme.Scheme)
-	Expect(err).NotTo(HaveOccurred())
+	if err != nil {
+		log.Fatalf("add GitopsCluster to schema failed: %s", err)
+	}
 
-	//+kubebuilder:scaffold:scheme
+	k8sManager, err = ctrl.NewManager(cfg, ctrl.Options{
+		Scheme: scheme.Scheme,
+	})
+	if err != nil {
+		log.Fatalf("initializing controller manager failed: %s", err)
+	}
 
-	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
-	Expect(err).NotTo(HaveOccurred())
-	Expect(k8sClient).NotTo(BeNil())
+	r := controllers.NewGitopsClusterReconciler(k8sManager.GetClient(), scheme.Scheme, controllers.Options{})
+	err = (r).SetupWithManager(k8sManager)
+	if err != nil {
+		log.Fatalf("setup cluster controller failed: %s", err)
+	}
 
-}, 60)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		err = k8sManager.Start(ctx)
+		if err != nil {
+			log.Fatalf("starting controller manager failed: %s", err)
+		}
+	}()
 
-var _ = AfterSuite(func() {
-	By("tearing down the test environment")
-	err := testEnv.Stop()
-	Expect(err).NotTo(HaveOccurred())
-})
+	k8sClient = k8sManager.GetClient()
+	if k8sClient == nil {
+		log.Fatalf("failed getting k8s client: k8sManager.GetClient() returned nil")
+	}
+
+	retCode := m.Run()
+
+	cancel()
+
+	err = testEnv.Stop()
+	if err != nil {
+		log.Fatalf("stoping test env failed: %s", err)
+	}
+
+	os.Exit(retCode)
+
+}
