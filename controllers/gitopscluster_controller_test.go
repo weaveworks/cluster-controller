@@ -484,9 +484,9 @@ func TestFinalizers(t *testing.T) {
 	}
 }
 
-func makeTestReconciler(t *testing.T, opts controllers.Options, objs ...runtime.Object) controllers.GitopsClusterReconciler {
+func makeTestReconciler(t *testing.T, opts controllers.Options, objs ...runtime.Object) *controllers.GitopsClusterReconciler {
 	s, tc := makeTestClientAndScheme(t, opts, objs...)
-	return *controllers.NewGitopsClusterReconciler(tc, s, opts)
+	return controllers.NewGitopsClusterReconciler(tc, s, opts)
 }
 
 func makeTestClientAndScheme(t *testing.T, opts controllers.Options, objs ...runtime.Object) (*runtime.Scheme, client.Client) {

@@ -33,9 +33,6 @@ import (
 	//+kubebuilder:scaffold:imports
 )
 
-// These tests use Ginkgo (BDD-style Go testing framework). Refer to
-// http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
-
 var k8sManager ctrl.Manager
 var k8sClient client.Client
 var testEnv *envtest.Environment
