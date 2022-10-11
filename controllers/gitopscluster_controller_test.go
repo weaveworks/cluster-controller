@@ -54,7 +54,8 @@ func TestReconcile(t *testing.T) {
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			},
 			requeueAfter:      controllers.MissingSecretRequeueTime,
 			wantCondition:     meta.ReadyCondition,
@@ -76,7 +77,8 @@ func TestReconcile(t *testing.T) {
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			},
 			requeueAfter:  1 * time.Minute,
 			wantCondition: meta.ReadyCondition,
@@ -113,7 +115,8 @@ func TestReconcile(t *testing.T) {
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			},
 			errString:         "failed to get CAPI cluster.*missing.*not found",
 			wantCondition:     meta.ReadyCondition,
@@ -135,7 +138,8 @@ func TestReconcile(t *testing.T) {
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			},
 			wantCondition:     meta.ReadyCondition,
 			wantStatus:        "False",
@@ -158,7 +162,8 @@ func TestReconcile(t *testing.T) {
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			},
 			wantCondition:     gitopsv1alpha1.ClusterProvisionedCondition,
 			wantStatus:        "True",
@@ -182,7 +187,8 @@ func TestReconcile(t *testing.T) {
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			},
 			wantCondition: meta.ReadyCondition,
 			wantStatus:    "True",
@@ -219,7 +225,8 @@ func TestReconcile(t *testing.T) {
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			},
 			requeueAfter:      1 * time.Minute,
 			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
@@ -241,7 +248,8 @@ func TestReconcile(t *testing.T) {
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			},
 			requeueAfter:      1 * time.Minute,
 			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
@@ -263,7 +271,8 @@ func TestReconcile(t *testing.T) {
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			},
 			requeueAfter:      1 * time.Minute,
 			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
@@ -364,7 +373,8 @@ func TestFinalizedDeletion(t *testing.T) {
 			tt.gitopsCluster.ObjectMeta.DeletionTimestamp = &now
 			controllerutil.AddFinalizer(tt.gitopsCluster, controllers.GitOpsClusterFinalizer)
 			opts := controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			}
 			r := makeTestReconciler(t, opts, append(tt.additionalObjs, tt.gitopsCluster)...)
 
@@ -462,7 +472,8 @@ func TestFinalizers(t *testing.T) {
 	for _, tt := range finalizerTests {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			}
 			r := makeTestReconciler(t, opts, append(tt.additionalObjs, tt.gitopsCluster)...)
 
