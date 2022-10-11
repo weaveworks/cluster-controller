@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/fluxcd/pkg/apis/meta"
@@ -63,9 +62,6 @@ const (
 	// MissingSecretRequeueTime is the period after which a secret will be
 	// checked if it doesn't exist.
 	MissingSecretRequeueTime = time.Second * 30
-
-	// DefaultRequeueTime period to wait between reconciles.
-	DefaultRequeueTime = time.Minute * 1
 )
 
 // GitopsClusterReconciler reconciles a GitopsCluster object
@@ -76,28 +72,21 @@ type GitopsClusterReconciler struct {
 	ConfigParser func(b []byte) (client.Client, error)
 
 	lastConnectivityCheck map[string]time.Time
-
-	defaultRequeueTime time.Duration
 }
 
 type Options struct {
-	CAPIEnabled bool
+	CAPIEnabled        bool
+	DefaultRequeueTime time.Duration
 }
 
 // NewGitopsClusterReconciler creates and returns a configured
 // reconciler ready for use.
 func NewGitopsClusterReconciler(c client.Client, s *runtime.Scheme, opts Options) *GitopsClusterReconciler {
-	defaultRequeueTime := os.Getenv("DEFAULT_REQUEUE_TIME")
-	if defaultRequeueTime == "" {
-		defaultRequeueTime = DefaultRequeueTime
-	}
-
 	return &GitopsClusterReconciler{
 		Client:                c,
 		Scheme:                s,
 		Options:               opts,
 		lastConnectivityCheck: map[string]time.Time{},
-		defaultRequeueTime:    defaultRequeueTime,
 	}
 }
 
@@ -243,7 +232,7 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: r.defaultRequeueTime}, nil
+	return ctrl.Result{RequeueAfter: r.Options.DefaultRequeueTime}, nil
 }
 
 func (r *GitopsClusterReconciler) reconcileDeletedReferences(ctx context.Context, gc *gitopsv1alpha1.GitopsCluster) error {

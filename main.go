@@ -19,6 +19,7 @@ package main
 import (
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -39,6 +40,9 @@ import (
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
+
+	// DefaultRequeueTime period to wait between reconciles.
+	DefaultRequeueTime = time.Minute * 1
 )
 
 var options controllers.Options
@@ -59,6 +63,19 @@ func main() {
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.BoolVar(&options.CAPIEnabled, "capi-enabled", true, "Enable CAPI support.")
+
+	options.DefaultRequeueTime = DefaultRequeueTime
+
+	requeueTimeStr := os.Getenv("DEFAULT_REQUEUE_TIME")
+	if requeueTimeStr != "" {
+		defaultTime, err := time.ParseDuration(requeueTimeStr)
+		if err != nil {
+			setupLog.Error(err, "failed parsing DEFAULT_REQUEUE_TIME environment variable")
+			os.Exit(1)
+		}
+
+		options.DefaultRequeueTime = defaultTime
+	}
 
 	opts := zap.Options{
 		Development: true,
