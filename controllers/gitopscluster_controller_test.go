@@ -3,6 +3,7 @@ package controllers_test
 import (
 	"context"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientsetscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/clientcmd"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -52,7 +54,8 @@ func TestReconcile(t *testing.T) {
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			},
 			requeueAfter:      controllers.MissingSecretRequeueTime,
 			wantCondition:     meta.ReadyCondition,
@@ -74,8 +77,10 @@ func TestReconcile(t *testing.T) {
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			},
+			requeueAfter:  1 * time.Minute,
 			wantCondition: meta.ReadyCondition,
 			wantStatus:    "True",
 		},
@@ -110,7 +115,8 @@ func TestReconcile(t *testing.T) {
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			},
 			errString:         "failed to get CAPI cluster.*missing.*not found",
 			wantCondition:     meta.ReadyCondition,
@@ -132,7 +138,8 @@ func TestReconcile(t *testing.T) {
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			},
 			wantCondition:     meta.ReadyCondition,
 			wantStatus:        "False",
@@ -155,7 +162,8 @@ func TestReconcile(t *testing.T) {
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			},
 			wantCondition:     gitopsv1alpha1.ClusterProvisionedCondition,
 			wantStatus:        "True",
@@ -179,7 +187,8 @@ func TestReconcile(t *testing.T) {
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			},
 			wantCondition: meta.ReadyCondition,
 			wantStatus:    "True",
@@ -200,6 +209,75 @@ func TestReconcile(t *testing.T) {
 			wantCondition:     meta.ReadyCondition,
 			wantStatus:        "False",
 			wantStatusMessage: "CAPIClusterRef \"dev\" found but CAPI support is disabled",
+		},
+		{
+			name: "verify connectivity to the cluster",
+			state: []runtime.Object{
+				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+					c.Spec.SecretRef = &meta.LocalObjectReference{
+						Name: "dev",
+					}
+				}),
+				makeTestSecret(types.NamespacedName{
+					Name:      "dev",
+					Namespace: testNamespace,
+				}, map[string][]byte{"value": kubeConfig}),
+			},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
+			},
+			requeueAfter:      1 * time.Minute,
+			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
+			wantStatus:        "True",
+			wantStatusMessage: "cluster connectivity is ok",
+		},
+		{
+			name: "verify connectivity failed to read secret",
+			state: []runtime.Object{
+				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+					c.Spec.SecretRef = &meta.LocalObjectReference{
+						Name: "dev",
+					}
+				}),
+				makeTestSecret(types.NamespacedName{
+					Name:      "dev",
+					Namespace: testNamespace,
+				}, map[string][]byte{"value": []byte("foo")}),
+			},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
+			},
+			requeueAfter:      1 * time.Minute,
+			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
+			wantStatus:        "False",
+			wantStatusMessage: "failed creating rest config from secret: couldn't get version/kind; json parse error: json: cannot unmarshal string into Go value of type struct { APIVersion string \"json:\\\"apiVersion,omitempty\\\"\"; Kind string \"json:\\\"kind,omitempty\\\"\" }",
+		},
+		{
+			name: "verify connectivity failed to connect",
+			state: []runtime.Object{
+				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+					c.Spec.SecretRef = &meta.LocalObjectReference{
+						Name: "dev",
+					}
+				}),
+				makeTestSecret(types.NamespacedName{
+					Name:      "dev",
+					Namespace: testNamespace,
+				}, map[string][]byte{"value": kubeconfigWithError(t)}),
+			},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
+			},
+			requeueAfter:      1 * time.Minute,
+			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
+			wantStatus:        "False",
+			wantStatusMessage: "failed connecting to the cluster: the server rejected our request for an unknown reason",
 		},
 	}
 
@@ -295,7 +373,8 @@ func TestFinalizedDeletion(t *testing.T) {
 			tt.gitopsCluster.ObjectMeta.DeletionTimestamp = &now
 			controllerutil.AddFinalizer(tt.gitopsCluster, controllers.GitOpsClusterFinalizer)
 			opts := controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			}
 			r := makeTestReconciler(t, opts, append(tt.additionalObjs, tt.gitopsCluster)...)
 
@@ -393,7 +472,8 @@ func TestFinalizers(t *testing.T) {
 	for _, tt := range finalizerTests {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := controllers.Options{
-				CAPIEnabled: true,
+				CAPIEnabled:        true,
+				DefaultRequeueTime: 1 * time.Minute,
 			}
 			r := makeTestReconciler(t, opts, append(tt.additionalObjs, tt.gitopsCluster)...)
 
@@ -415,13 +495,9 @@ func TestFinalizers(t *testing.T) {
 	}
 }
 
-func makeTestReconciler(t *testing.T, opts controllers.Options, objs ...runtime.Object) controllers.GitopsClusterReconciler {
+func makeTestReconciler(t *testing.T, opts controllers.Options, objs ...runtime.Object) *controllers.GitopsClusterReconciler {
 	s, tc := makeTestClientAndScheme(t, opts, objs...)
-	return controllers.GitopsClusterReconciler{
-		Client:  tc,
-		Scheme:  s,
-		Options: opts,
-	}
+	return controllers.NewGitopsClusterReconciler(tc, s, opts)
 }
 
 func makeTestClientAndScheme(t *testing.T, opts controllers.Options, objs ...runtime.Object) (*runtime.Scheme, client.Client) {
@@ -535,4 +611,16 @@ func assertClusterStatus(t *testing.T, cls *gitopsv1alpha1.GitopsCluster, condTy
 	if cond.Message != msg {
 		t.Fatalf("got condition reason %q, want %q", cond.Message, msg)
 	}
+}
+
+func kubeconfigWithError(t *testing.T) []byte {
+	clientConfig, err := clientcmd.Load(kubeConfig)
+	assertNoError(t, err)
+
+	clientConfig.Clusters["envtest"].Server = strings.ReplaceAll(clientConfig.Clusters["envtest"].Server, "https", "http")
+
+	data, err := clientcmd.Write(*clientConfig)
+	assertNoError(t, err)
+
+	return data
 }

@@ -25,10 +25,13 @@ import (
 	"github.com/fluxcd/pkg/apis/meta"
 	"github.com/fluxcd/pkg/runtime/conditions"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -67,19 +70,23 @@ type GitopsClusterReconciler struct {
 	Scheme       *runtime.Scheme
 	Options      Options
 	ConfigParser func(b []byte) (client.Client, error)
+
+	lastConnectivityCheck map[string]time.Time
 }
 
 type Options struct {
-	CAPIEnabled bool
+	CAPIEnabled        bool
+	DefaultRequeueTime time.Duration
 }
 
 // NewGitopsClusterReconciler creates and returns a configured
 // reconciler ready for use.
 func NewGitopsClusterReconciler(c client.Client, s *runtime.Scheme, opts Options) *GitopsClusterReconciler {
 	return &GitopsClusterReconciler{
-		Client:  c,
-		Scheme:  s,
-		Options: opts,
+		Client:                c,
+		Scheme:                s,
+		Options:               opts,
+		lastConnectivityCheck: map[string]time.Time{},
 	}
 }
 
@@ -221,7 +228,11 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
-	return ctrl.Result{}, nil
+	if err := r.verifyConnectivity(ctx, cluster); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{RequeueAfter: r.Options.DefaultRequeueTime}, nil
 }
 
 func (r *GitopsClusterReconciler) reconcileDeletedReferences(ctx context.Context, gc *gitopsv1alpha1.GitopsCluster) error {
@@ -362,4 +373,102 @@ func (r *GitopsClusterReconciler) requestsForCAPIClusterChange(o client.Object) 
 		reqs = append(reqs, ctrl.Request{NamespacedName: name})
 	}
 	return reqs
+}
+
+func (r *GitopsClusterReconciler) verifyConnectivity(ctx context.Context, cluster *gitopsv1alpha1.GitopsCluster) error {
+	log := log.FromContext(ctx)
+
+	log.Info("checking connectivity", "cluster", cluster.Name)
+
+	nsName := types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}
+
+	lastCheck := r.lastConnectivityCheck[nsName.String()]
+
+	if time.Since(lastCheck) < 30*time.Second {
+		return nil
+	}
+
+	r.lastConnectivityCheck[nsName.String()] = time.Now()
+
+	config, err := r.restConfigFromSecret(ctx, cluster)
+	if err != nil {
+		conditions.MarkFalse(cluster, gitopsv1alpha1.ClusterConnectivity, gitopsv1alpha1.ClusterConnectionFailedReason, fmt.Sprintf("failed creating rest config from secret: %s", err))
+		if err := r.Status().Update(ctx, cluster); err != nil {
+			log.Error(err, "failed to update Cluster status")
+			return err
+		}
+
+		return nil
+	}
+
+	if _, err := client.New(config, client.Options{}); err != nil {
+		conditions.MarkFalse(cluster, gitopsv1alpha1.ClusterConnectivity, gitopsv1alpha1.ClusterConnectionFailedReason, fmt.Sprintf("failed connecting to the cluster: %s", err))
+		if err := r.Status().Update(ctx, cluster); err != nil {
+			log.Error(err, "failed to update Cluster status")
+			return err
+		}
+
+		return nil
+	}
+
+	conditions.MarkTrue(cluster, gitopsv1alpha1.ClusterConnectivity, gitopsv1alpha1.ClusterConnectionSucceededReason, "cluster connectivity is ok")
+	if err := r.Status().Update(ctx, cluster); err != nil {
+		log.Error(err, "failed to update Cluster status")
+		return err
+	}
+
+	return nil
+}
+
+func (r *GitopsClusterReconciler) restConfigFromSecret(ctx context.Context, cluster *gitopsv1alpha1.GitopsCluster) (*rest.Config, error) {
+	log := log.FromContext(ctx)
+
+	var secretRef string
+
+	if cluster.Spec.CAPIClusterRef != nil {
+		secretRef = fmt.Sprintf("%s-kubeconfig", cluster.Spec.CAPIClusterRef.Name)
+	}
+
+	if secretRef == "" && cluster.Spec.SecretRef != nil {
+		secretRef = cluster.Spec.SecretRef.Name
+	}
+
+	if secretRef == "" {
+		return nil, errors.New("no secret ref found")
+	}
+
+	key := types.NamespacedName{
+		Name:      secretRef,
+		Namespace: cluster.Namespace,
+	}
+
+	var secret v1.Secret
+	if err := r.Get(ctx, key, &secret); err != nil {
+		log.Error(err, "unable to fetch secret for GitOps Cluster", "cluster", cluster.Name)
+
+		return nil, err
+	}
+
+	var data []byte
+
+	for k := range secret.Data {
+		if k == "value" || k == "value.yaml" {
+			data = secret.Data[k]
+
+			break
+		}
+	}
+
+	if len(data) == 0 {
+		return nil, errors.New("no data present in cluster secret")
+	}
+
+	restCfg, err := clientcmd.RESTConfigFromKubeConfig([]byte(data))
+	if err != nil {
+		log.Error(err, "unable to create kubconfig from GitOps Cluster secret data", "cluster", cluster.Name)
+
+		return nil, err
+	}
+
+	return restCfg, nil
 }

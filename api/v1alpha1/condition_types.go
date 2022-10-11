@@ -22,6 +22,12 @@ const (
 
 	// CAPINotEnabled signals that CAPI component is not installed.
 	CAPINotEnabled string = "CAPINotEnabled"
+
+	// ClusterConnectionSucceededReason signals if the cluster can be connected
+	ClusterConnectionSucceededReason string = "ClusterConnectionSucceeded"
+
+	// ClusterConnectionFailedReason signals cluster connection failed
+	ClusterConnectionFailedReason string = "ClusterConnectionFailed"
 )
 
 const (
@@ -35,4 +41,7 @@ const (
 	// ClusterProvisionedReason is the reason for the provisioned state being
 	// set.
 	ClusterProvisionedReason string = "ClusterProvisioned"
+
+	// ClusterConnectivity indicates if the cluster has connectivity
+	ClusterConnectivity string = "ClusterConnectivity"
 )
