@@ -225,7 +225,6 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			log.Error(err, "failed to update Cluster status")
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, nil
 	}
 
 	if err := r.verifyConnectivity(ctx, cluster); err != nil {
