@@ -27,8 +27,9 @@ import (
 )
 
 const (
-	testName      = "test-cluster"
-	testNamespace = "testing"
+	testName           = "test-cluster"
+	testNamespace      = "testing"
+	defaultRequeueTime = 1 * time.Minute
 )
 
 func TestReconcile(t *testing.T) {
@@ -55,7 +56,7 @@ func TestReconcile(t *testing.T) {
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
 				CAPIEnabled:        true,
-				DefaultRequeueTime: 1 * time.Minute,
+				DefaultRequeueTime: defaultRequeueTime,
 			},
 			requeueAfter:      controllers.MissingSecretRequeueTime,
 			wantCondition:     meta.ReadyCondition,
@@ -78,9 +79,9 @@ func TestReconcile(t *testing.T) {
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
 				CAPIEnabled:        true,
-				DefaultRequeueTime: 1 * time.Minute,
+				DefaultRequeueTime: defaultRequeueTime,
 			},
-			requeueAfter:  1 * time.Minute,
+			requeueAfter:  defaultRequeueTime,
 			wantCondition: meta.ReadyCondition,
 			wantStatus:    "True",
 		},
@@ -116,7 +117,7 @@ func TestReconcile(t *testing.T) {
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
 				CAPIEnabled:        true,
-				DefaultRequeueTime: 1 * time.Minute,
+				DefaultRequeueTime: defaultRequeueTime,
 			},
 			errString:         "failed to get CAPI cluster.*missing.*not found",
 			wantCondition:     meta.ReadyCondition,
@@ -139,8 +140,9 @@ func TestReconcile(t *testing.T) {
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
 				CAPIEnabled:        true,
-				DefaultRequeueTime: 1 * time.Minute,
+				DefaultRequeueTime: defaultRequeueTime,
 			},
+			requeueAfter:      defaultRequeueTime,
 			wantCondition:     meta.ReadyCondition,
 			wantStatus:        "False",
 			wantStatusMessage: "Waiting for ControlPlaneReady status",
@@ -163,8 +165,9 @@ func TestReconcile(t *testing.T) {
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
 				CAPIEnabled:        true,
-				DefaultRequeueTime: 1 * time.Minute,
+				DefaultRequeueTime: defaultRequeueTime,
 			},
+			requeueAfter:      defaultRequeueTime,
 			wantCondition:     gitopsv1alpha1.ClusterProvisionedCondition,
 			wantStatus:        "True",
 			wantStatusMessage: "CAPI Cluster has been provisioned",
@@ -188,8 +191,9 @@ func TestReconcile(t *testing.T) {
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
 				CAPIEnabled:        true,
-				DefaultRequeueTime: 1 * time.Minute,
+				DefaultRequeueTime: defaultRequeueTime,
 			},
+			requeueAfter:  defaultRequeueTime,
 			wantCondition: meta.ReadyCondition,
 			wantStatus:    "True",
 		},
@@ -226,9 +230,9 @@ func TestReconcile(t *testing.T) {
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
 				CAPIEnabled:        true,
-				DefaultRequeueTime: 1 * time.Minute,
+				DefaultRequeueTime: defaultRequeueTime,
 			},
-			requeueAfter:      1 * time.Minute,
+			requeueAfter:      defaultRequeueTime,
 			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
 			wantStatus:        "True",
 			wantStatusMessage: "cluster connectivity is ok",
@@ -249,9 +253,9 @@ func TestReconcile(t *testing.T) {
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
 				CAPIEnabled:        true,
-				DefaultRequeueTime: 1 * time.Minute,
+				DefaultRequeueTime: defaultRequeueTime,
 			},
-			requeueAfter:      1 * time.Minute,
+			requeueAfter:      defaultRequeueTime,
 			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
 			wantStatus:        "False",
 			wantStatusMessage: "failed creating rest config from secret: couldn't get version/kind; json parse error: json: cannot unmarshal string into Go value of type struct { APIVersion string \"json:\\\"apiVersion,omitempty\\\"\"; Kind string \"json:\\\"kind,omitempty\\\"\" }",
@@ -272,9 +276,9 @@ func TestReconcile(t *testing.T) {
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
 				CAPIEnabled:        true,
-				DefaultRequeueTime: 1 * time.Minute,
+				DefaultRequeueTime: defaultRequeueTime,
 			},
-			requeueAfter:      1 * time.Minute,
+			requeueAfter:      defaultRequeueTime,
 			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
 			wantStatus:        "False",
 			wantStatusMessage: "failed connecting to the cluster: the server rejected our request for an unknown reason",
@@ -374,7 +378,7 @@ func TestFinalizedDeletion(t *testing.T) {
 			controllerutil.AddFinalizer(tt.gitopsCluster, controllers.GitOpsClusterFinalizer)
 			opts := controllers.Options{
 				CAPIEnabled:        true,
-				DefaultRequeueTime: 1 * time.Minute,
+				DefaultRequeueTime: defaultRequeueTime,
 			}
 			r := makeTestReconciler(t, opts, append(tt.additionalObjs, tt.gitopsCluster)...)
 
@@ -473,7 +477,7 @@ func TestFinalizers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := controllers.Options{
 				CAPIEnabled:        true,
-				DefaultRequeueTime: 1 * time.Minute,
+				DefaultRequeueTime: defaultRequeueTime,
 			}
 			r := makeTestReconciler(t, opts, append(tt.additionalObjs, tt.gitopsCluster)...)
 
