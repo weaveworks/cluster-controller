@@ -377,6 +377,11 @@ func (r *GitopsClusterReconciler) requestsForCAPIClusterChange(o client.Object) 
 func (r *GitopsClusterReconciler) verifyConnectivity(ctx context.Context, cluster *gitopsv1alpha1.GitopsCluster) error {
 	log := log.FromContext(ctx)
 
+	// avoid checking the cluster if it's under deletion.
+	if !cluster.ObjectMeta.DeletionTimestamp.IsZero() {
+		return nil
+	}
+
 	log.Info("checking connectivity", "cluster", cluster.Name)
 
 	nsName := types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}
