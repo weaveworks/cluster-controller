@@ -225,7 +225,6 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			log.Error(err, "failed to update Cluster status")
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, nil
 	}
 
 	if err := r.verifyConnectivity(ctx, cluster); err != nil {
@@ -377,6 +376,11 @@ func (r *GitopsClusterReconciler) requestsForCAPIClusterChange(o client.Object) 
 
 func (r *GitopsClusterReconciler) verifyConnectivity(ctx context.Context, cluster *gitopsv1alpha1.GitopsCluster) error {
 	log := log.FromContext(ctx)
+
+	// avoid checking the cluster if it's under deletion.
+	if !cluster.ObjectMeta.DeletionTimestamp.IsZero() {
+		return nil
+	}
 
 	log.Info("checking connectivity", "cluster", cluster.Name)
 
