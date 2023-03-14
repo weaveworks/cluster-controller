@@ -3,7 +3,7 @@
 ## How to run the test suite
 
 Prerequisites:
-* Go >= 1.17
+* Go >= 1.19
 * clusterctl >= 1.1.3
 
 You can run the test suite by simply doing
