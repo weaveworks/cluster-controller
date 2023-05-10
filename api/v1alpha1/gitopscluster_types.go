@@ -66,7 +66,6 @@ type GitopsCluster struct {
 
 	Spec                GitopsClusterSpec   `json:"spec,omitempty"`
 	Status              GitopsClusterStatus `json:"status,omitempty"`
-	ClusterConnectivity string              `json:"clusterConnectivity,omitempty"`
 }
 
 // +kubebuilder:object:root=true
