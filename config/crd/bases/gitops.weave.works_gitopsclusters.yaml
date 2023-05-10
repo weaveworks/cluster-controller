@@ -25,6 +25,9 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="Ready")].message
       name: Status
       type: string
+    - jsonPath: .status.conditions[?(@.type=="ClusterConnectivity")].status
+      name: ClusterConnectivity
+      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:

@@ -57,14 +57,15 @@ func (in *GitopsCluster) SetConditions(conditions []metav1.Condition) {
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description=""
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type==\"Ready\")].status",description=""
 // +kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.conditions[?(@.type==\"Ready\")].message",description=""
+// +kubebuilder:printcolumn:name="ClusterConnectivity",type="string",JSONPath=".status.conditions[?(@.type==\"ClusterConnectivity\")].status",description=""
 
 // GitopsCluster is the Schema for the gitopsclusters API
 type GitopsCluster struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   GitopsClusterSpec   `json:"spec,omitempty"`
-	Status GitopsClusterStatus `json:"status,omitempty"`
+	Spec                GitopsClusterSpec   `json:"spec,omitempty"`
+	Status              GitopsClusterStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
