@@ -9,7 +9,7 @@ require (
 	k8s.io/api v0.26.3
 	k8s.io/apimachinery v0.27.3
 	k8s.io/client-go v0.26.3
-	sigs.k8s.io/cluster-api v1.4.1
+	sigs.k8s.io/cluster-api v1.4.4
 	sigs.k8s.io/controller-runtime v0.14.6
 )
 
