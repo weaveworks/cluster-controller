@@ -6,9 +6,9 @@ require (
 	github.com/fluxcd/pkg/apis/meta v1.1.1
 	github.com/fluxcd/pkg/runtime v0.35.0
 	github.com/spf13/pflag v1.0.5
-	k8s.io/api v0.26.3
+	k8s.io/api v0.27.3
 	k8s.io/apimachinery v0.27.3
-	k8s.io/client-go v0.26.3
+	k8s.io/client-go v0.27.3
 	sigs.k8s.io/cluster-api v1.4.1
 	sigs.k8s.io/controller-runtime v0.14.6
 )
@@ -48,7 +48,6 @@ require (
 	github.com/prometheus/client_model v0.3.0 // indirect
 	github.com/prometheus/common v0.37.0 // indirect
 	github.com/prometheus/procfs v0.8.0 // indirect
-	github.com/rogpeppe/go-internal v1.6.1 // indirect
 	go.uber.org/atomic v1.10.0 // indirect
 	go.uber.org/multierr v1.8.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
