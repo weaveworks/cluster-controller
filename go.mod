@@ -7,7 +7,7 @@ require (
 	github.com/fluxcd/pkg/runtime v0.35.0
 	github.com/spf13/pflag v1.0.5
 	k8s.io/api v0.26.3
-	k8s.io/apimachinery v0.27.3
+	k8s.io/apimachinery v0.27.4
 	k8s.io/client-go v0.26.3
 	sigs.k8s.io/cluster-api v1.4.1
 	sigs.k8s.io/controller-runtime v0.14.6
