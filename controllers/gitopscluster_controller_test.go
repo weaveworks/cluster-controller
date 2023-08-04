@@ -294,10 +294,10 @@ func TestReconcile(t *testing.T) {
 
 			result, err := r.Reconcile(context.TODO(), reconcile.Request{NamespacedName: tt.obj})
 
+			assertErrorMatch(t, tt.errString, err)
 			if result.RequeueAfter != tt.requeueAfter {
 				t.Fatalf("Reconcile() RequeueAfter got %v, want %v", result.RequeueAfter, tt.requeueAfter)
 			}
-			assertErrorMatch(t, tt.errString, err)
 
 			clsObjectKey := types.NamespacedName{Namespace: testNamespace, Name: testName}
 			cls := testGetGitopsCluster(t, r.Client, clsObjectKey)
@@ -320,6 +320,7 @@ func TestFinalizedDeletion(t *testing.T) {
 			"when CAPI cluster exists",
 			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
 				c.ObjectMeta.Namespace = "test-ns"
+				c.ObjectMeta.Finalizers = []string{controllers.GitOpsClusterFinalizer}
 				c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
 					Name: "test-cluster",
 				}
@@ -333,6 +334,7 @@ func TestFinalizedDeletion(t *testing.T) {
 			"when CAPI cluster has been deleted",
 			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
 				c.ObjectMeta.Namespace = "test-ns"
+				c.ObjectMeta.Finalizers = []string{controllers.GitOpsClusterFinalizer}
 				c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
 					Name: "test-cluster",
 				}
@@ -346,6 +348,7 @@ func TestFinalizedDeletion(t *testing.T) {
 			"when referenced secret exists",
 			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
 				c.ObjectMeta.Namespace = "test-ns"
+				c.ObjectMeta.Finalizers = []string{controllers.GitOpsClusterFinalizer}
 				c.Spec.SecretRef = &meta.LocalObjectReference{
 					Name: "test-cluster",
 				}
@@ -463,6 +466,7 @@ func TestFinalizers(t *testing.T) {
 			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
 				now := metav1.NewTime(time.Now())
 				c.ObjectMeta.Namespace = "test-ns"
+				c.ObjectMeta.Finalizers = []string{controllers.GitOpsClusterFinalizer}
 				c.ObjectMeta.DeletionTimestamp = &now
 				c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
 					Name: "test-cluster",
