@@ -3,7 +3,6 @@ package controllers_test
 import (
 	"context"
 	"regexp"
-	"strings"
 	"testing"
 	"time"
 
@@ -281,7 +280,7 @@ func TestReconcile(t *testing.T) {
 			requeueAfter:      defaultRequeueTime,
 			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
 			wantStatus:        "False",
-			wantStatusMessage: "failed connecting to the cluster: the server rejected our request for an unknown reason",
+			wantStatusMessage: `failed creating rest config from secret: invalid configuration: no server found for cluster "envtest"`,
 		},
 	}
 
@@ -463,6 +462,7 @@ func TestFinalizers(t *testing.T) {
 			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
 				now := metav1.NewTime(time.Now())
 				c.ObjectMeta.Namespace = "test-ns"
+				c.ObjectMeta.Finalizers = []string{"testing"}
 				c.ObjectMeta.DeletionTimestamp = &now
 				c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
 					Name: "test-cluster",
@@ -506,7 +506,10 @@ func makeTestReconciler(t *testing.T, opts controllers.Options, objs ...runtime.
 
 func makeTestClientAndScheme(t *testing.T, opts controllers.Options, objs ...runtime.Object) (*runtime.Scheme, client.Client) {
 	s := makeClusterScheme(t, opts)
-	return s, fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(objs...).Build()
+	return s, fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&gitopsv1alpha1.GitopsCluster{}).
+		WithRuntimeObjects(objs...).Build()
 }
 
 func makeClusterScheme(t *testing.T, opts controllers.Options) *runtime.Scheme {
@@ -621,7 +624,7 @@ func kubeconfigWithError(t *testing.T) []byte {
 	clientConfig, err := clientcmd.Load(kubeConfig)
 	assertNoError(t, err)
 
-	clientConfig.Clusters["envtest"].Server = strings.ReplaceAll(clientConfig.Clusters["envtest"].Server, "https", "http")
+	clientConfig.Clusters["envtest"].Server = ""
 
 	data, err := clientcmd.Write(*clientConfig)
 	assertNoError(t, err)

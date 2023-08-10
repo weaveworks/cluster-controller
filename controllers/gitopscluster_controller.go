@@ -38,7 +38,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	gitopsv1alpha1 "github.com/weaveworks/cluster-controller/api/v1alpha1"
 )
@@ -293,13 +292,13 @@ func (r *GitopsClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&gitopsv1alpha1.GitopsCluster{}).
 		Watches(
-			&source.Kind{Type: &corev1.Secret{}},
+			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(r.requestsForSecretChange),
 		)
 
 	if r.Options.CAPIEnabled {
 		builder.Watches(
-			&source.Kind{Type: &clusterv1.Cluster{}},
+			&clusterv1.Cluster{},
 			handler.EnqueueRequestsFromMapFunc(r.requestsForCAPIClusterChange),
 		)
 
@@ -334,13 +333,12 @@ func (r *GitopsClusterReconciler) indexGitopsClusterByCAPIClusterName(o client.O
 	return nil
 }
 
-func (r *GitopsClusterReconciler) requestsForSecretChange(o client.Object) []ctrl.Request {
+func (r *GitopsClusterReconciler) requestsForSecretChange(ctx context.Context, o client.Object) []ctrl.Request {
 	secret, ok := o.(*corev1.Secret)
 	if !ok {
 		panic(fmt.Sprintf("Expected a Secret but got a %T", o))
 	}
 
-	ctx := context.Background()
 	var list gitopsv1alpha1.GitopsClusterList
 	if err := r.Client.List(ctx, &list, client.MatchingFields{SecretNameIndexKey: secret.GetName()}); err != nil {
 		return nil
@@ -354,13 +352,12 @@ func (r *GitopsClusterReconciler) requestsForSecretChange(o client.Object) []ctr
 	return reqs
 }
 
-func (r *GitopsClusterReconciler) requestsForCAPIClusterChange(o client.Object) []ctrl.Request {
+func (r *GitopsClusterReconciler) requestsForCAPIClusterChange(ctx context.Context, o client.Object) []ctrl.Request {
 	cluster, ok := o.(*clusterv1.Cluster)
 	if !ok {
 		panic(fmt.Sprintf("Expected a CAPI Cluster but got a %T", o))
 	}
 
-	ctx := context.Background()
 	var list gitopsv1alpha1.GitopsClusterList
 	if err := r.Client.List(ctx, &list, client.MatchingFields{CAPIClusterNameIndexKey: cluster.GetName()}); err != nil {
 		return nil
