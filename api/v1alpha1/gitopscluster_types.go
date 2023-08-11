@@ -64,8 +64,8 @@ type GitopsCluster struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec                GitopsClusterSpec   `json:"spec,omitempty"`
-	Status              GitopsClusterStatus `json:"status,omitempty"`
+	Spec   GitopsClusterSpec   `json:"spec,omitempty"`
+	Status GitopsClusterStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
