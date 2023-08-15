@@ -25,7 +25,6 @@ import (
 	"github.com/fluxcd/pkg/apis/meta"
 	"github.com/fluxcd/pkg/runtime/conditions"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -227,6 +226,19 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if err := r.verifyConnectivity(ctx, cluster); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if conditions.IsTrue(cluster, gitopsv1alpha1.SecretFoundReason) {
+		if conditions.IsTrue(cluster, gitopsv1alpha1.ClusterConnectivity) {
+			conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.ClusterConnectedReason, "")
+		} else {
+			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.ClusterNotConnectedReason, "No Connectivity")
+		}
+	}
+
+	if err := r.Status().Update(ctx, cluster); err != nil {
+		log.Error(err, "failed to update Cluster status")
 		return ctrl.Result{}, err
 	}
 
@@ -443,7 +455,7 @@ func (r *GitopsClusterReconciler) restConfigFromSecret(ctx context.Context, clus
 		Namespace: cluster.Namespace,
 	}
 
-	var secret v1.Secret
+	var secret corev1.Secret
 	if err := r.Get(ctx, key, &secret); err != nil {
 		log.Error(err, "unable to fetch secret for GitOps Cluster", "cluster", cluster.Name)
 

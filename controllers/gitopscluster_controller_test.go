@@ -73,7 +73,7 @@ func TestReconcile(t *testing.T) {
 				makeTestSecret(types.NamespacedName{
 					Name:      "dev",
 					Namespace: testNamespace,
-				}, map[string][]byte{"value": []byte("testing")}),
+				}, map[string][]byte{"value": kubeConfig}),
 			},
 			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
 			opts: controllers.Options{
@@ -281,6 +281,51 @@ func TestReconcile(t *testing.T) {
 			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
 			wantStatus:        "False",
 			wantStatusMessage: `failed creating rest config from secret: invalid configuration: no server found for cluster "envtest"`,
+		},
+		{
+			name: "Both Secret and Connectivity are ok, mark as Ready",
+			state: []runtime.Object{
+				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+					c.Spec.SecretRef = &meta.LocalObjectReference{
+						Name: "dev",
+					}
+				}),
+				makeTestSecret(types.NamespacedName{
+					Name:      "dev",
+					Namespace: testNamespace,
+				}, map[string][]byte{"value": kubeConfig}),
+			},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled:        false,
+				DefaultRequeueTime: defaultRequeueTime,
+			},
+			requeueAfter:  defaultRequeueTime,
+			wantCondition: meta.ReadyCondition,
+			wantStatus:    "True",
+		},
+		{
+			name: "No connectivity causes ready condition to be false",
+			state: []runtime.Object{
+				makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+					c.Spec.SecretRef = &meta.LocalObjectReference{
+						Name: "dev",
+					}
+				}),
+				makeTestSecret(types.NamespacedName{
+					Name:      "dev",
+					Namespace: testNamespace,
+				}, map[string][]byte{"value": kubeconfigWithError(t)}),
+			},
+			obj: types.NamespacedName{Namespace: testNamespace, Name: testName},
+			opts: controllers.Options{
+				CAPIEnabled:        true,
+				DefaultRequeueTime: defaultRequeueTime,
+			},
+			requeueAfter:      defaultRequeueTime,
+			wantCondition:     meta.ReadyCondition,
+			wantStatus:        "False",
+			wantStatusMessage: "No connectivity",
 		},
 	}
 
