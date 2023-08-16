@@ -51,9 +51,8 @@ jobs:
         uses: docker/login-action@f054a8b539a109f9f41c372932f1ae047eff08c9
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.WGE_DOCKER_IO_PASSWORD }}
-          password: ${{ secrets.WGE_DOCKER_IO_USER }}
-
+          username: ${{ secrets.WGE_DOCKER_IO_USER }}
+          password: ${{ secrets.WGE_DOCKER_IO_PASSWORD }}
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@98669ae865ea3cffbcbaa878cf57c20bbf1c6c38
