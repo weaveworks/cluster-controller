@@ -60,7 +60,7 @@ func TestReconcile(t *testing.T) {
 			requeueAfter:      controllers.MissingSecretRequeueTime,
 			wantCondition:     meta.ReadyCondition,
 			wantStatus:        "False",
-			wantStatusMessage: "failed to get secret \"testing/missing\": secrets \"missing\" not found",
+			wantStatusMessage: `failed to get referenced secret: secrets "missing" not found`,
 		},
 		{
 			name: "secret exists",
@@ -80,9 +80,10 @@ func TestReconcile(t *testing.T) {
 				CAPIEnabled:        true,
 				DefaultRequeueTime: defaultRequeueTime,
 			},
-			requeueAfter:  defaultRequeueTime,
-			wantCondition: meta.ReadyCondition,
-			wantStatus:    "True",
+			requeueAfter:      defaultRequeueTime,
+			wantCondition:     meta.ReadyCondition,
+			wantStatus:        "True",
+			wantStatusMessage: "cluster is connected",
 		},
 		{
 			name: "non-CAPI cluster has provisioned annotation",
@@ -232,9 +233,9 @@ func TestReconcile(t *testing.T) {
 				DefaultRequeueTime: defaultRequeueTime,
 			},
 			requeueAfter:      defaultRequeueTime,
-			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
+			wantCondition:     meta.ReadyCondition,
 			wantStatus:        "True",
-			wantStatusMessage: "cluster connectivity is ok",
+			wantStatusMessage: "cluster is connected",
 		},
 		{
 			name: "verify connectivity failed to read secret",
@@ -254,10 +255,9 @@ func TestReconcile(t *testing.T) {
 				CAPIEnabled:        true,
 				DefaultRequeueTime: defaultRequeueTime,
 			},
-			requeueAfter:      defaultRequeueTime,
-			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
+			wantCondition:     meta.ReadyCondition,
 			wantStatus:        "False",
-			wantStatusMessage: "failed creating rest config from secret: couldn't get version/kind; json parse error: json: cannot unmarshal string into Go value of type struct { APIVersion string \"json:\\\"apiVersion,omitempty\\\"\"; Kind string \"json:\\\"kind,omitempty\\\"\" }",
+			wantStatusMessage: "failed to connect to cluster with secret: failed to parse KubeConfig from Secret",
 		},
 		{
 			name: "verify connectivity failed to connect",
@@ -277,10 +277,9 @@ func TestReconcile(t *testing.T) {
 				CAPIEnabled:        true,
 				DefaultRequeueTime: defaultRequeueTime,
 			},
-			requeueAfter:      defaultRequeueTime,
-			wantCondition:     gitopsv1alpha1.ClusterConnectivity,
+			wantCondition:     meta.ReadyCondition,
 			wantStatus:        "False",
-			wantStatusMessage: `failed creating rest config from secret: invalid configuration: no server found for cluster "envtest"`,
+			wantStatusMessage: "failed to connect to cluster with secret: failed to parse KubeConfig from Secret",
 		},
 		{
 			name: "Both Secret and Connectivity are ok, mark as Ready",
@@ -300,9 +299,10 @@ func TestReconcile(t *testing.T) {
 				CAPIEnabled:        false,
 				DefaultRequeueTime: defaultRequeueTime,
 			},
-			requeueAfter:  defaultRequeueTime,
-			wantCondition: meta.ReadyCondition,
-			wantStatus:    "True",
+			requeueAfter:      defaultRequeueTime,
+			wantCondition:     meta.ReadyCondition,
+			wantStatus:        "True",
+			wantStatusMessage: "cluster is connected",
 		},
 		{
 			name: "No connectivity causes ready condition to be false",
@@ -322,10 +322,9 @@ func TestReconcile(t *testing.T) {
 				CAPIEnabled:        true,
 				DefaultRequeueTime: defaultRequeueTime,
 			},
-			requeueAfter:      defaultRequeueTime,
 			wantCondition:     meta.ReadyCondition,
 			wantStatus:        "False",
-			wantStatusMessage: "No connectivity",
+			wantStatusMessage: `failed to connect to cluster with secret: failed to parse KubeConfig from Secret`,
 		},
 	}
 
@@ -337,6 +336,11 @@ func TestReconcile(t *testing.T) {
 			}
 
 			result, err := r.Reconcile(context.TODO(), reconcile.Request{NamespacedName: tt.obj})
+			updated := testGetGitopsCluster(t, r.Client, tt.obj)
+
+			if controllerutil.ContainsFinalizer(updated, controllers.GitOpsClusterFinalizer) {
+				result, err = r.Reconcile(context.TODO(), reconcile.Request{NamespacedName: tt.obj})
+			}
 
 			if result.RequeueAfter != tt.requeueAfter {
 				t.Fatalf("Reconcile() RequeueAfter got %v, want %v", result.RequeueAfter, tt.requeueAfter)
@@ -533,9 +537,16 @@ func TestFinalizers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			updated := testGetGitopsCluster(t, r.Client, client.ObjectKeyFromObject(tt.gitopsCluster))
+
+			if controllerutil.ContainsFinalizer(updated, controllers.GitOpsClusterFinalizer) {
+				_, err = r.Reconcile(context.TODO(), ctrl.Request{NamespacedName: types.NamespacedName{
+					Name:      tt.gitopsCluster.Name,
+					Namespace: tt.gitopsCluster.Namespace,
+				}})
+			}
 
 			if tt.wantFinalizer {
-				updated := testGetGitopsCluster(t, r.Client, client.ObjectKeyFromObject(tt.gitopsCluster))
 				if !controllerutil.ContainsFinalizer(updated, controllers.GitOpsClusterFinalizer) {
 					t.Fatal("cluster HasFinalizer got false, want true")
 				}

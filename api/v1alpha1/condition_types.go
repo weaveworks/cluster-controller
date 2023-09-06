@@ -15,8 +15,6 @@ const (
 	ClusterConnectedReason string = "ClusterConnected"
 	// ClusterNotConnectedReason signals that a given cluster is not connected.
 	ClusterNotConnectedReason string = "ClusterNotConnected"
-	// SecretMissingAndNoConnectivityReason signals that a given secret is missing and there is no connectivity to the cluster.
-	SecretMissingAndNoConnectivityReason string = "SecretMissingAndNoConnectivity"
 
 	// WaitingForCAPIClusterDeletionReason signals that this cluster has been
 	// deleted, but the referenced CAPI Cluster still exists.
@@ -47,7 +45,4 @@ const (
 	// ClusterProvisionedReason is the reason for the provisioned state being
 	// set.
 	ClusterProvisionedReason string = "ClusterProvisioned"
-
-	// ClusterConnectivity indicates if the cluster has connectivity
-	ClusterConnectivity string = "ClusterConnectivity"
 )
