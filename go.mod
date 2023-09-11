@@ -4,12 +4,12 @@ go 1.20
 
 require (
 	github.com/fluxcd/pkg/apis/meta v1.1.2
-	github.com/fluxcd/pkg/runtime v0.41.0
+	github.com/fluxcd/pkg/runtime v0.42.0
 	github.com/spf13/pflag v1.0.5
 	k8s.io/api v0.27.4
 	k8s.io/apimachinery v0.27.4
 	k8s.io/client-go v0.27.4
-	sigs.k8s.io/cluster-api v1.5.0
+	sigs.k8s.io/cluster-api v1.5.1
 	sigs.k8s.io/controller-runtime v0.15.1
 )
 
