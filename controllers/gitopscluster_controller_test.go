@@ -10,6 +10,7 @@ import (
 	"github.com/fluxcd/pkg/runtime/conditions"
 	gitopsv1alpha1 "github.com/weaveworks/cluster-controller/api/v1alpha1"
 	"github.com/weaveworks/cluster-controller/controllers"
+	"github.com/weaveworks/cluster-controller/test"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -501,7 +502,7 @@ func TestFinalizers(t *testing.T) {
 
 func makeTestReconciler(t *testing.T, opts controllers.Options, objs ...runtime.Object) *controllers.GitopsClusterReconciler {
 	s, tc := makeTestClientAndScheme(t, opts, objs...)
-	return controllers.NewGitopsClusterReconciler(tc, s, opts)
+	return controllers.NewGitopsClusterReconciler(tc, s, &test.FakeEventRecorder{}, opts)
 }
 
 func makeTestClientAndScheme(t *testing.T, opts controllers.Options, objs ...runtime.Object) (*runtime.Scheme, client.Client) {

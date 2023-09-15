@@ -63,16 +63,22 @@ const (
 	MissingSecretRequeueTime = time.Second * 30
 )
 
+type eventRecorder interface {
+	Event(object runtime.Object, eventType, reason, message string)
+}
+
 // GitopsClusterReconciler reconciles a GitopsCluster object
 type GitopsClusterReconciler struct {
 	client.Client
-	Scheme       *runtime.Scheme
-	Options      Options
-	ConfigParser func(b []byte) (client.Client, error)
+	Scheme        *runtime.Scheme
+	Options       Options
+	ConfigParser  func(b []byte) (client.Client, error)
+	EventRecorder eventRecorder
 
 	lastConnectivityCheck map[string]time.Time
 }
 
+// Options configures the GitOpsClusterReconciler features.
 type Options struct {
 	CAPIEnabled        bool
 	DefaultRequeueTime time.Duration
@@ -80,10 +86,11 @@ type Options struct {
 
 // NewGitopsClusterReconciler creates and returns a configured
 // reconciler ready for use.
-func NewGitopsClusterReconciler(c client.Client, s *runtime.Scheme, opts Options) *GitopsClusterReconciler {
+func NewGitopsClusterReconciler(c client.Client, s *runtime.Scheme, recorder eventRecorder, opts Options) *GitopsClusterReconciler {
 	return &GitopsClusterReconciler{
 		Client:                c,
 		Scheme:                s,
+		EventRecorder:         recorder,
 		Options:               opts,
 		lastConnectivityCheck: map[string]time.Time{},
 	}

@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/weaveworks/cluster-controller/controllers"
+	"github.com/weaveworks/cluster-controller/test"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -74,7 +75,7 @@ func TestMain(m *testing.M) {
 		log.Fatalf("initializing controller manager failed: %s", err)
 	}
 
-	r := controllers.NewGitopsClusterReconciler(k8sManager.GetClient(), scheme.Scheme, controllers.Options{})
+	r := controllers.NewGitopsClusterReconciler(k8sManager.GetClient(), scheme.Scheme, &test.FakeEventRecorder{}, controllers.Options{})
 	err = (r).SetupWithManager(k8sManager)
 	if err != nil {
 		log.Fatalf("setup cluster controller failed: %s", err)
