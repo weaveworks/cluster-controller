@@ -25,7 +25,6 @@ import (
 	"github.com/fluxcd/pkg/apis/meta"
 	"github.com/fluxcd/pkg/runtime/conditions"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -128,105 +127,78 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// examine DeletionTimestamp to determine if object is under deletion
-	if cluster.ObjectMeta.DeletionTimestamp.IsZero() {
-		if cluster.Spec.SecretRef != nil || cluster.Spec.CAPIClusterRef != nil {
-			if !controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
-				controllerutil.AddFinalizer(cluster, GitOpsClusterFinalizer)
-				if err := r.Update(ctx, cluster); err != nil {
-					return ctrl.Result{}, err
-				}
-			}
-		}
-	} else {
-		if controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
-			err := r.reconcileDeletedReferences(ctx, cluster)
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-			controllerutil.RemoveFinalizer(cluster, GitOpsClusterFinalizer)
-			if err := r.Update(ctx, cluster); err != nil {
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{}, nil
-		}
+	if !cluster.ObjectMeta.DeletionTimestamp.IsZero() {
+		return r.finalize(ctx, cluster)
 	}
 
-	if cluster.Spec.SecretRef != nil {
-		name := types.NamespacedName{
-			Namespace: cluster.GetNamespace(),
-			Name:      cluster.Spec.SecretRef.Name,
+	if cluster.Spec.CAPIClusterRef == nil && cluster.Spec.SecretRef == nil {
+		return ctrl.Result{}, nil
+	}
+
+	if !controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
+		controllerutil.AddFinalizer(cluster, GitOpsClusterFinalizer)
+		if err := r.Update(ctx, cluster); err != nil {
+			return ctrl.Result{}, err
 		}
 
-		if metav1.HasAnnotation(cluster.ObjectMeta, GitOpsClusterProvisionedAnnotation) {
-			conditions.MarkTrue(cluster, gitopsv1alpha1.ClusterProvisionedCondition, gitopsv1alpha1.ClusterProvisionedReason, "Cluster Provisioned annotation detected")
+		return ctrl.Result{}, nil
+	}
+
+	if cluster.Spec.CAPIClusterRef != nil {
+		if err := r.reconcileCAPICluster(ctx, cluster); err != nil {
+			return ctrl.Result{}, err
 		}
 
-		var secret corev1.Secret
-		if err := r.Get(ctx, name, &secret); err != nil {
-			e := fmt.Errorf("failed to get secret %q: %w", name, err)
-			if apierrors.IsNotFound(err) {
-				// TODO: this could _possibly_ be controllable by the
-				// `GitopsCluster` itself.
-				log.Info("waiting for cluster secret to be available")
-				conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, e.Error())
-				if err := r.Status().Update(ctx, cluster); err != nil {
-					log.Error(err, "failed to update Cluster status")
-					return ctrl.Result{}, err
-				}
-				return ctrl.Result{RequeueAfter: MissingSecretRequeueTime}, nil
-			}
+		return ctrl.Result{RequeueAfter: r.Options.DefaultRequeueTime}, nil
+	}
+
+	secretErr := r.checkClusterSecret(ctx, cluster)
+	if secretErr == nil {
+		log.Info("Secret found")
+	}
+
+	var connectivityErr error
+	// TODO: We should check for connectivity with CAPI clusters
+	if secretErr == nil {
+		connectivityErr = r.verifyConnectivity(ctx, cluster)
+	}
+
+	if secretErr != nil {
+		e := fmt.Errorf("failed to get referenced secret: %w", secretErr)
+		if apierrors.IsNotFound(secretErr) {
+			log.Info("waiting for cluster secret to be available")
 			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, e.Error())
 			if err := r.Status().Update(ctx, cluster); err != nil {
 				log.Error(err, "failed to update Cluster status")
 				return ctrl.Result{}, err
 			}
 
+			return ctrl.Result{RequeueAfter: MissingSecretRequeueTime}, nil
+		}
+
+		conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, e.Error())
+		if err := r.Status().Update(ctx, cluster); err != nil {
+			log.Error(err, "failed to update Cluster status")
 			return ctrl.Result{}, e
 		}
 
-		log.Info("Secret found", "secret", name)
-
-		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.SecretFoundReason, "")
-		if err := r.Status().Update(ctx, cluster); err != nil {
-			log.Error(err, "failed to update Cluster status")
-			return ctrl.Result{}, err
-		}
+		return ctrl.Result{}, e
 	}
 
-	if cluster.Spec.CAPIClusterRef != nil {
-		name := types.NamespacedName{
-			Namespace: cluster.GetNamespace(),
-			Name:      cluster.Spec.CAPIClusterRef.Name,
-		}
-		var capiCluster clusterv1.Cluster
-		if err := r.Get(ctx, name, &capiCluster); err != nil {
-			e := fmt.Errorf("failed to get CAPI cluster %q: %w", name, err)
-			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForCAPIClusterReason, e.Error())
-			if err := r.Status().Update(ctx, cluster); err != nil {
-				log.Error(err, "failed to update Cluster status")
-				return ctrl.Result{}, err
-			}
-
+	if connectivityErr != nil {
+		e := fmt.Errorf("failed to connect to cluster with secret: %w", connectivityErr)
+		conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.ClusterNotConnectedReason, e.Error())
+		if err := r.Status().Update(ctx, cluster); err != nil {
+			log.Error(err, "failed to update Cluster status")
 			return ctrl.Result{}, e
 		}
 
-		log.Info("CAPI Cluster found", "CAPI cluster", name)
-
-		if !capiCluster.Status.ControlPlaneReady {
-			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForControlPlaneReadyStatusReason, "Waiting for ControlPlaneReady status")
-		} else {
-			conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.ControlPlaneReadyStatusReason, "")
-		}
-		if clusterv1.ClusterPhase(capiCluster.Status.Phase) == clusterv1.ClusterPhaseProvisioned {
-			conditions.MarkTrue(cluster, gitopsv1alpha1.ClusterProvisionedCondition, gitopsv1alpha1.ClusterProvisionedReason, "CAPI Cluster has been provisioned")
-		}
-		if err := r.Status().Update(ctx, cluster); err != nil {
-			log.Error(err, "failed to update Cluster status")
-			return ctrl.Result{}, err
-		}
+		return ctrl.Result{}, e
 	}
 
-	if err := r.verifyConnectivity(ctx, cluster); err != nil {
+	conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.ClusterConnectedReason, "cluster is connected")
+	if err := r.Status().Update(ctx, cluster); err != nil {
+		log.Error(err, "failed to update Cluster status")
 		return ctrl.Result{}, err
 	}
 
@@ -373,12 +345,6 @@ func (r *GitopsClusterReconciler) requestsForCAPIClusterChange(ctx context.Conte
 
 func (r *GitopsClusterReconciler) verifyConnectivity(ctx context.Context, cluster *gitopsv1alpha1.GitopsCluster) error {
 	log := log.FromContext(ctx)
-
-	// avoid checking the cluster if it's under deletion.
-	if !cluster.ObjectMeta.DeletionTimestamp.IsZero() {
-		return nil
-	}
-
 	log.Info("checking connectivity", "cluster", cluster.Name)
 
 	nsName := types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}
@@ -393,32 +359,101 @@ func (r *GitopsClusterReconciler) verifyConnectivity(ctx context.Context, cluste
 
 	config, err := r.restConfigFromSecret(ctx, cluster)
 	if err != nil {
-		conditions.MarkFalse(cluster, gitopsv1alpha1.ClusterConnectivity, gitopsv1alpha1.ClusterConnectionFailedReason, fmt.Sprintf("failed creating rest config from secret: %s", err))
+		conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.ClusterConnectionFailedReason, fmt.Sprintf("failed creating rest config from secret: %s", err))
 		if err := r.Status().Update(ctx, cluster); err != nil {
 			log.Error(err, "failed to update Cluster status")
 			return err
 		}
 
-		return nil
+		return err
 	}
 
 	if _, err := client.New(config, client.Options{}); err != nil {
-		conditions.MarkFalse(cluster, gitopsv1alpha1.ClusterConnectivity, gitopsv1alpha1.ClusterConnectionFailedReason, fmt.Sprintf("failed connecting to the cluster: %s", err))
+		conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.ClusterConnectionFailedReason, fmt.Sprintf("failed connecting to the cluster: %s", err))
 		if err := r.Status().Update(ctx, cluster); err != nil {
 			log.Error(err, "failed to update Cluster status")
 			return err
 		}
 
-		return nil
+		return err
 	}
 
-	conditions.MarkTrue(cluster, gitopsv1alpha1.ClusterConnectivity, gitopsv1alpha1.ClusterConnectionSucceededReason, "cluster connectivity is ok")
+	conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.ClusterConnectionSucceededReason, "cluster connectivity is ok")
 	if err := r.Status().Update(ctx, cluster); err != nil {
 		log.Error(err, "failed to update Cluster status")
 		return err
 	}
 
 	return nil
+}
+
+func (r *GitopsClusterReconciler) checkClusterSecret(ctx context.Context, cluster *gitopsv1alpha1.GitopsCluster) error {
+	if cluster.Spec.SecretRef == nil {
+		return nil
+	}
+	name := types.NamespacedName{
+		Namespace: cluster.GetNamespace(),
+		Name:      cluster.Spec.SecretRef.Name,
+	}
+
+	if metav1.HasAnnotation(cluster.ObjectMeta, GitOpsClusterProvisionedAnnotation) {
+		conditions.MarkTrue(cluster, gitopsv1alpha1.ClusterProvisionedCondition, gitopsv1alpha1.ClusterProvisionedReason, "Cluster Provisioned annotation detected")
+	}
+
+	var secret corev1.Secret
+	// TODO This should check for a value key in the secret data.
+	return r.Get(ctx, name, &secret)
+}
+
+func (r *GitopsClusterReconciler) reconcileCAPICluster(ctx context.Context, cluster *gitopsv1alpha1.GitopsCluster) error {
+	log := log.FromContext(ctx)
+	name := types.NamespacedName{
+		Namespace: cluster.GetNamespace(),
+		Name:      cluster.Spec.CAPIClusterRef.Name,
+	}
+	var capiCluster clusterv1.Cluster
+	if err := r.Get(ctx, name, &capiCluster); err != nil {
+		e := fmt.Errorf("failed to get CAPI cluster %q: %w", name, err)
+		conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForCAPIClusterReason, e.Error())
+		if err := r.Status().Update(ctx, cluster); err != nil {
+			log.Error(err, "failed to update Cluster status")
+			return e
+		}
+
+		return e
+	}
+
+	log.Info("CAPI Cluster found", "CAPI cluster", name)
+
+	if !capiCluster.Status.ControlPlaneReady {
+		conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForControlPlaneReadyStatusReason, "Waiting for ControlPlaneReady status")
+	} else {
+		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.ControlPlaneReadyStatusReason, "")
+	}
+	if clusterv1.ClusterPhase(capiCluster.Status.Phase) == clusterv1.ClusterPhaseProvisioned {
+		conditions.MarkTrue(cluster, gitopsv1alpha1.ClusterProvisionedCondition, gitopsv1alpha1.ClusterProvisionedReason, "CAPI Cluster has been provisioned")
+	}
+	if err := r.Status().Update(ctx, cluster); err != nil {
+		log.Error(err, "failed to update Cluster status")
+		return err
+	}
+
+	return nil
+}
+
+func (r *GitopsClusterReconciler) finalize(ctx context.Context, cluster *gitopsv1alpha1.GitopsCluster) (ctrl.Result, error) {
+	if controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
+		err := r.reconcileDeletedReferences(ctx, cluster)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		controllerutil.RemoveFinalizer(cluster, GitOpsClusterFinalizer)
+		if err := r.Update(ctx, cluster); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	return ctrl.Result{}, nil
 }
 
 func (r *GitopsClusterReconciler) restConfigFromSecret(ctx context.Context, cluster *gitopsv1alpha1.GitopsCluster) (*rest.Config, error) {
@@ -443,7 +478,7 @@ func (r *GitopsClusterReconciler) restConfigFromSecret(ctx context.Context, clus
 		Namespace: cluster.Namespace,
 	}
 
-	var secret v1.Secret
+	var secret corev1.Secret
 	if err := r.Get(ctx, key, &secret); err != nil {
 		log.Error(err, "unable to fetch secret for GitOps Cluster", "cluster", cluster.Name)
 
@@ -464,11 +499,11 @@ func (r *GitopsClusterReconciler) restConfigFromSecret(ctx context.Context, clus
 		return nil, errors.New("no data present in cluster secret")
 	}
 
-	restCfg, err := clientcmd.RESTConfigFromKubeConfig([]byte(data))
+	restCfg, err := clientcmd.RESTConfigFromKubeConfig(data)
 	if err != nil {
-		log.Error(err, "unable to create kubconfig from GitOps Cluster secret data", "cluster", cluster.Name)
+		log.Error(err, "unable to create KubeConfig from GitOps Cluster secret data", "cluster", cluster.Name)
 
-		return nil, err
+		return nil, errors.New("failed to parse KubeConfig from Secret")
 	}
 
 	return restCfg, nil

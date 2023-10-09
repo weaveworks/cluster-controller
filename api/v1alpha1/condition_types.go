@@ -11,6 +11,10 @@ const (
 	ControlPlaneReadyStatusReason string = "ControlPlaneReadyStatus"
 	// WaitingForCAPIClusterReason signals that a given CAPI cluster has not been found.
 	WaitingForCAPIClusterReason string = "WaitingForCAPICluster"
+	// ClusterConnectedReason signals that a given cluster is connected.
+	ClusterConnectedReason string = "ClusterConnected"
+	// ClusterNotConnectedReason signals that a given cluster is not connected.
+	ClusterNotConnectedReason string = "ClusterNotConnected"
 
 	// WaitingForCAPIClusterDeletionReason signals that this cluster has been
 	// deleted, but the referenced CAPI Cluster still exists.
@@ -41,7 +45,4 @@ const (
 	// ClusterProvisionedReason is the reason for the provisioned state being
 	// set.
 	ClusterProvisionedReason string = "ClusterProvisioned"
-
-	// ClusterConnectivity indicates if the cluster has connectivity
-	ClusterConnectivity string = "ClusterConnectivity"
 )
