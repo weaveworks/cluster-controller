@@ -22,8 +22,10 @@ import (
 	"github.com/fluxcd/pkg/apis/meta"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+// GitOpsClusterNoSecretFinalizerAnnotation if applied to a GitopsCluster
+// indicates that we should not wait for the secret to be removed before
+// allowing the cluster to be removed.
+const GitOpsClusterNoSecretFinalizerAnnotation = "clusters.gitops.weave.works/no-secret-finalizer"
 
 // GitopsClusterSpec defines the desired state of GitopsCluster
 type GitopsClusterSpec struct {
