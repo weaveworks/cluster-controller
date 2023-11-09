@@ -43,12 +43,17 @@ import (
 )
 
 // GitOpsClusterFinalizer is the finalizer key used to detect when we need to
-// finalize a GitOps cluster.
+// finalize a Gitops cluster.
 const GitOpsClusterFinalizer = "clusters.gitops.weave.works"
 
-// GitOpsClusterProvisionedAnnotation if applied to a GitOpsCluster indicates
+// GitOpsClusterProvisionedAnnotation if applied to a GitopsCluster indicates
 // that it should have a ready Provisioned condition.
 const GitOpsClusterProvisionedAnnotation = "clusters.gitops.weave.works/provisioned"
+
+// GitOpsClusterNoSecretFinalizerAnnotation if applied to a GitopsCluster
+// indicates that we should not wait for the secret to be removed before
+// allowing the cluster to be removed.
+const GitOpsClusterNoSecretFinalizerAnnotation = "clusters.gitops.weave.works/no-secret-finalizer"
 
 const (
 	// SecretNameIndexKey is the key used for indexing secret
@@ -129,7 +134,8 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// examine DeletionTimestamp to determine if object is under deletion
 	if cluster.ObjectMeta.DeletionTimestamp.IsZero() {
-		if cluster.Spec.SecretRef != nil || cluster.Spec.CAPIClusterRef != nil {
+		hasSkipFinalizer := metav1.HasAnnotation(cluster.ObjectMeta, GitOpsClusterNoSecretFinalizerAnnotation)
+		if (cluster.Spec.SecretRef != nil || cluster.Spec.CAPIClusterRef != nil) && !hasSkipFinalizer {
 			if !controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
 				controllerutil.AddFinalizer(cluster, GitOpsClusterFinalizer)
 				if err := r.Update(ctx, cluster); err != nil {

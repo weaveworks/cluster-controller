@@ -458,6 +458,22 @@ func TestFinalizers(t *testing.T) {
 			true,
 		},
 		{
+			"cluster referencing secret - but no-secret-finalization annotation",
+			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+				c.ObjectMeta.Namespace = "test-ns"
+				c.ObjectMeta.Annotations = map[string]string{
+					controllers.GitOpsClusterNoSecretFinalizerAnnotation: "true",
+				}
+				c.Spec.SecretRef = &meta.LocalObjectReference{
+					Name: "test-cluster",
+				}
+			}),
+			[]runtime.Object{makeTestSecret(types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"},
+				map[string][]byte{"value": []byte("test")})},
+			false,
+		},
+
+		{
 			"deleted gitops cluster",
 			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
 				now := metav1.NewTime(time.Now())
@@ -489,11 +505,9 @@ func TestFinalizers(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if tt.wantFinalizer {
-				updated := testGetGitopsCluster(t, r.Client, client.ObjectKeyFromObject(tt.gitopsCluster))
-				if !controllerutil.ContainsFinalizer(updated, controllers.GitOpsClusterFinalizer) {
-					t.Fatal("cluster HasFinalizer got false, want true")
-				}
+			updated := testGetGitopsCluster(t, r.Client, client.ObjectKeyFromObject(tt.gitopsCluster))
+			if v := controllerutil.ContainsFinalizer(updated, controllers.GitOpsClusterFinalizer); v != tt.wantFinalizer {
+				t.Fatalf("cluster HasFinalizer got %v, want %v", v, tt.wantFinalizer)
 			}
 		})
 	}
