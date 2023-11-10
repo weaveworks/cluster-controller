@@ -8,3 +8,9 @@ updates:
       - "weaveworks/pesto"
     # Only do security updates not version updates.
     open-pull-requests-limit: 0
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    reviewers:
+      - "weaveworks/pesto"
