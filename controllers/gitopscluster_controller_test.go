@@ -80,9 +80,10 @@ func TestReconcile(t *testing.T) {
 				CAPIEnabled:        true,
 				DefaultRequeueTime: defaultRequeueTime,
 			},
-			requeueAfter:  defaultRequeueTime,
-			wantCondition: meta.ReadyCondition,
-			wantStatus:    "True",
+			requeueAfter:      defaultRequeueTime,
+			wantCondition:     meta.ReadyCondition,
+			wantStatus:        "True",
+			wantStatusMessage: "Referenced secret is available",
 		},
 		{
 			name: "non-CAPI cluster has provisioned annotation",
@@ -462,7 +463,7 @@ func TestFinalizers(t *testing.T) {
 			makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
 				c.ObjectMeta.Namespace = "test-ns"
 				c.ObjectMeta.Annotations = map[string]string{
-					controllers.GitOpsClusterNoSecretFinalizerAnnotation: "true",
+					gitopsv1alpha1.GitOpsClusterNoSecretFinalizerAnnotation: "true",
 				}
 				c.Spec.SecretRef = &meta.LocalObjectReference{
 					Name: "test-cluster",

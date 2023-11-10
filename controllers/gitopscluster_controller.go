@@ -50,11 +50,6 @@ const GitOpsClusterFinalizer = "clusters.gitops.weave.works"
 // that it should have a ready Provisioned condition.
 const GitOpsClusterProvisionedAnnotation = "clusters.gitops.weave.works/provisioned"
 
-// GitOpsClusterNoSecretFinalizerAnnotation if applied to a GitopsCluster
-// indicates that we should not wait for the secret to be removed before
-// allowing the cluster to be removed.
-const GitOpsClusterNoSecretFinalizerAnnotation = "clusters.gitops.weave.works/no-secret-finalizer"
-
 const (
 	// SecretNameIndexKey is the key used for indexing secret
 	// resources based on their name.
@@ -134,7 +129,7 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// examine DeletionTimestamp to determine if object is under deletion
 	if cluster.ObjectMeta.DeletionTimestamp.IsZero() {
-		hasSkipFinalizer := metav1.HasAnnotation(cluster.ObjectMeta, GitOpsClusterNoSecretFinalizerAnnotation)
+		hasSkipFinalizer := metav1.HasAnnotation(cluster.ObjectMeta, gitopsv1alpha1.GitOpsClusterNoSecretFinalizerAnnotation)
 		if (cluster.Spec.SecretRef != nil || cluster.Spec.CAPIClusterRef != nil) && !hasSkipFinalizer {
 			if !controllerutil.ContainsFinalizer(cluster, GitOpsClusterFinalizer) {
 				controllerutil.AddFinalizer(cluster, GitOpsClusterFinalizer)
@@ -192,7 +187,7 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 		log.Info("Secret found", "secret", name)
 
-		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.SecretFoundReason, "")
+		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.SecretFoundReason, "Referenced secret is available")
 		if err := r.Status().Update(ctx, cluster); err != nil {
 			log.Error(err, "failed to update Cluster status")
 			return ctrl.Result{}, err
