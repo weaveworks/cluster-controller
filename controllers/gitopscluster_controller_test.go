@@ -2,6 +2,7 @@ package controllers_test
 
 import (
 	"context"
+	"path/filepath"
 	"regexp"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -514,6 +516,86 @@ func TestFinalizers(t *testing.T) {
 	}
 }
 
+func TestGitopsClusterValidation(t *testing.T) {
+	testEnv := &envtest.Environment{
+		CRDDirectoryPaths: []string{filepath.Join("..", "config", "crd", "bases")},
+	}
+	testCfg, err := testEnv.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := testEnv.Stop(); err != nil {
+			t.Fatalf("failed to shutdown testEnv: %s", err)
+		}
+	}()
+
+	s := runtime.NewScheme()
+	if err := gitopsv1alpha1.AddToScheme(s); err != nil {
+		t.Fatal(err)
+	}
+
+	cl, err := client.New(testCfg, client.Options{Scheme: s})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("when neither the secret nor capi cluster are configured", func(t *testing.T) {
+		testCluster := makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+			c.ObjectMeta.Name = "no-config"
+			c.ObjectMeta.Namespace = "default"
+			c.Spec.SecretRef = nil
+			c.Spec.CAPIClusterRef = nil
+		})
+
+		err := cl.Create(context.TODO(), testCluster)
+		assertErrorMatch(t, "must provide a secretRef or capiClusterRef", err)
+		assertErrorDoesNotMatch(t, "cannot provide both capiClusterRef and secretRef", err)
+	})
+
+	t.Run("when both the secret and capi cluster are configured", func(t *testing.T) {
+		testCluster := makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+			c.ObjectMeta.Name = "both-configs"
+			c.ObjectMeta.Namespace = "default"
+			c.Spec.SecretRef = &meta.LocalObjectReference{
+				Name: "test-secret",
+			}
+			c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
+				Name: "test-cluster",
+			}
+		})
+
+		err := cl.Create(context.TODO(), testCluster)
+		assertErrorMatch(t, "cannot provide both capiClusterRef and secretRef", err)
+		assertErrorDoesNotMatch(t, "must provide a secretRef or capiClusterRef", err)
+	})
+
+	t.Run("when the secret is configured", func(t *testing.T) {
+		testCluster := makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+			c.ObjectMeta.Name = "only-secret-configured"
+			c.ObjectMeta.Namespace = "default"
+			c.Spec.SecretRef = &meta.LocalObjectReference{
+				Name: "test-secret",
+			}
+		})
+
+		assertNoError(t, cl.Create(context.TODO(), testCluster))
+	})
+
+	t.Run("when the capiClusterRef is configured", func(t *testing.T) {
+		testCluster := makeTestCluster(func(c *gitopsv1alpha1.GitopsCluster) {
+			c.ObjectMeta.Name = "only-capi-cluster-configured"
+			c.ObjectMeta.Namespace = "default"
+			c.Spec.CAPIClusterRef = &meta.LocalObjectReference{
+				Name: "test-cluster",
+			}
+		})
+
+		assertNoError(t, cl.Create(context.TODO(), testCluster))
+	})
+
+}
+
 func makeTestReconciler(t *testing.T, opts controllers.Options, objs ...runtime.Object) *controllers.GitopsClusterReconciler {
 	s, tc := makeTestClientAndScheme(t, opts, objs...)
 	return controllers.NewGitopsClusterReconciler(tc, s, opts)
@@ -589,6 +671,13 @@ func assertErrorMatch(t *testing.T, s string, e error) {
 	t.Helper()
 	if !matchErrorString(t, s, e) {
 		t.Fatalf("error did not match, got %s, want %s", e, s)
+	}
+}
+
+func assertErrorDoesNotMatch(t *testing.T, s string, e error) {
+	t.Helper()
+	if matchErrorString(t, s, e) {
+		t.Fatalf("error did match, got %s, should not contain %s", e, s)
 	}
 }
 
