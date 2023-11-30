@@ -147,7 +147,7 @@ spec:
             type: object
         type: object
         x-kubernetes-validations:
-        - message: must confgure spec
+        - message: must configure spec
           rule: has(self.spec)
     served: true
     storage: true
