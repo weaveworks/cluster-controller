@@ -28,6 +28,8 @@ import (
 const GitOpsClusterNoSecretFinalizerAnnotation = "clusters.gitops.weave.works/no-secret-finalizer"
 
 // GitopsClusterSpec defines the desired state of GitopsCluster
+// +kubebuilder:validation:XValidation:rule="(has(self.secretRef) || has(self.capiClusterRef))",message="must provide a secretRef or capiClusterRef"
+// +kubebuilder:validation:XValidation:rule="!(has(self.secretRef) && has(self.capiClusterRef))",message="cannot provide both capiClusterRef and secretRef"
 type GitopsClusterSpec struct {
 	// SecretRef specifies the Secret containing the kubeconfig for a cluster.
 	// +optional
@@ -62,6 +64,7 @@ func (in *GitopsCluster) SetConditions(conditions []metav1.Condition) {
 // +kubebuilder:printcolumn:name="ClusterConnectivity",type="string",JSONPath=".status.conditions[?(@.type==\"ClusterConnectivity\")].status",description=""
 
 // GitopsCluster is the Schema for the gitopsclusters API
+// +kubebuilder:validation:XValidation:rule="has(self.spec)",message="must confgure spec"
 type GitopsCluster struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
