@@ -30,14 +30,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	gitopsv1alpha1 "github.com/weaveworks/cluster-controller/api/v1alpha1"
 )
@@ -119,7 +122,7 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 		conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.CAPINotEnabled, e.Error())
 
-		if err := r.Status().Update(ctx, cluster); err != nil {
+		if err := r.patchStatus(ctx, req.NamespacedName, cluster.Status); err != nil {
 			log.Error(err, "failed to update Cluster status")
 			return ctrl.Result{}, err
 		}
@@ -168,16 +171,16 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			if apierrors.IsNotFound(err) {
 				// TODO: this could _possibly_ be controllable by the
 				// `GitopsCluster` itself.
-				log.Info("waiting for cluster secret to be available")
+				log.Info("Waiting for cluster secret to be available")
 				conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, e.Error())
-				if err := r.Status().Update(ctx, cluster); err != nil {
+				if err := r.patchStatus(ctx, req.NamespacedName, cluster.Status); err != nil {
 					log.Error(err, "failed to update Cluster status")
 					return ctrl.Result{}, err
 				}
 				return ctrl.Result{RequeueAfter: MissingSecretRequeueTime}, nil
 			}
 			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForSecretReason, e.Error())
-			if err := r.Status().Update(ctx, cluster); err != nil {
+			if err := r.patchStatus(ctx, req.NamespacedName, cluster.Status); err != nil {
 				log.Error(err, "failed to update Cluster status")
 				return ctrl.Result{}, err
 			}
@@ -188,7 +191,7 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		log.Info("Secret found", "secret", name)
 
 		conditions.MarkTrue(cluster, meta.ReadyCondition, gitopsv1alpha1.SecretFoundReason, "Referenced secret is available")
-		if err := r.Status().Update(ctx, cluster); err != nil {
+		if err := r.patchStatus(ctx, req.NamespacedName, cluster.Status); err != nil {
 			log.Error(err, "failed to update Cluster status")
 			return ctrl.Result{}, err
 		}
@@ -203,7 +206,7 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if err := r.Get(ctx, name, &capiCluster); err != nil {
 			e := fmt.Errorf("failed to get CAPI cluster %q: %w", name, err)
 			conditions.MarkFalse(cluster, meta.ReadyCondition, gitopsv1alpha1.WaitingForCAPIClusterReason, e.Error())
-			if err := r.Status().Update(ctx, cluster); err != nil {
+			if err := r.patchStatus(ctx, req.NamespacedName, cluster.Status); err != nil {
 				log.Error(err, "failed to update Cluster status")
 				return ctrl.Result{}, err
 			}
@@ -221,7 +224,7 @@ func (r *GitopsClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if clusterv1.ClusterPhase(capiCluster.Status.Phase) == clusterv1.ClusterPhaseProvisioned {
 			conditions.MarkTrue(cluster, gitopsv1alpha1.ClusterProvisionedCondition, gitopsv1alpha1.ClusterProvisionedReason, "CAPI Cluster has been provisioned")
 		}
-		if err := r.Status().Update(ctx, cluster); err != nil {
+		if err := r.patchStatus(ctx, req.NamespacedName, cluster.Status); err != nil {
 			log.Error(err, "failed to update Cluster status")
 			return ctrl.Result{}, err
 		}
@@ -250,7 +253,7 @@ func (r *GitopsClusterReconciler) reconcileDeletedReferences(ctx context.Context
 		conditions.MarkFalse(gc, meta.ReadyCondition,
 			gitopsv1alpha1.WaitingForCAPIClusterDeletionReason,
 			"waiting for CAPI cluster to be deleted")
-		if err := r.Status().Update(ctx, gc); err != nil {
+		if err := r.patchStatus(ctx, client.ObjectKeyFromObject(gc), gc.Status); err != nil {
 			log.Error(err, "failed to update Cluster status")
 			return err
 		}
@@ -270,7 +273,7 @@ func (r *GitopsClusterReconciler) reconcileDeletedReferences(ctx context.Context
 		conditions.MarkFalse(gc, meta.ReadyCondition,
 			gitopsv1alpha1.WaitingForSecretDeletionReason,
 			"waiting for access secret to be deleted")
-		if err := r.Status().Update(ctx, gc); err != nil {
+		if err := r.patchStatus(ctx, client.ObjectKeyFromObject(gc), gc.Status); err != nil {
 			log.Error(err, "failed to update Cluster status")
 			return err
 		}
@@ -291,7 +294,7 @@ func (r *GitopsClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	builder := ctrl.NewControllerManagedBy(mgr).
-		For(&gitopsv1alpha1.GitopsCluster{}).
+		For(&gitopsv1alpha1.GitopsCluster{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(
 			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(r.requestsForSecretChange),
@@ -380,7 +383,7 @@ func (r *GitopsClusterReconciler) verifyConnectivity(ctx context.Context, cluste
 		return nil
 	}
 
-	log.Info("checking connectivity", "cluster", cluster.Name)
+	log.Info("Checking connectivity", "cluster", cluster.Name)
 
 	nsName := types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}
 
@@ -394,8 +397,9 @@ func (r *GitopsClusterReconciler) verifyConnectivity(ctx context.Context, cluste
 
 	config, err := r.restConfigFromSecret(ctx, cluster)
 	if err != nil {
+		log.Error(err, "failed to parse the config from the secret")
 		conditions.MarkFalse(cluster, gitopsv1alpha1.ClusterConnectivity, gitopsv1alpha1.ClusterConnectionFailedReason, fmt.Sprintf("failed creating rest config from secret: %s", err))
-		if err := r.Status().Update(ctx, cluster); err != nil {
+		if err := r.patchStatus(ctx, client.ObjectKeyFromObject(cluster), cluster.Status); err != nil {
 			log.Error(err, "failed to update Cluster status")
 			return err
 		}
@@ -403,18 +407,34 @@ func (r *GitopsClusterReconciler) verifyConnectivity(ctx context.Context, cluste
 		return nil
 	}
 
-	if _, err := client.New(config, client.Options{}); err != nil {
+	k8sClient, err := discovery.NewDiscoveryClientForConfig(config)
+	if err != nil {
+		log.Error(err, "failed to create a discovery client with the config")
 		conditions.MarkFalse(cluster, gitopsv1alpha1.ClusterConnectivity, gitopsv1alpha1.ClusterConnectionFailedReason, fmt.Sprintf("failed connecting to the cluster: %s", err))
-		if err := r.Status().Update(ctx, cluster); err != nil {
+		if err := r.patchStatus(ctx, client.ObjectKeyFromObject(cluster), cluster.Status); err != nil {
 			log.Error(err, "failed to update Cluster status")
 			return err
 		}
 
 		return nil
 	}
+
+	version, err := k8sClient.ServerVersion()
+	if err != nil {
+		log.Error(err, "failed to get the server version")
+		conditions.MarkFalse(cluster, gitopsv1alpha1.ClusterConnectivity, gitopsv1alpha1.ClusterConnectionFailedReason, fmt.Sprintf("failed to get server version: %s", err))
+		if err := r.patchStatus(ctx, client.ObjectKeyFromObject(cluster), cluster.Status); err != nil {
+			log.Error(err, "failed to update Cluster status")
+			return err
+		}
+
+		return nil
+	}
+
+	log.Info("Server version", "version", version.String())
 
 	conditions.MarkTrue(cluster, gitopsv1alpha1.ClusterConnectivity, gitopsv1alpha1.ClusterConnectionSucceededReason, "cluster connectivity is ok")
-	if err := r.Status().Update(ctx, cluster); err != nil {
+	if err := r.patchStatus(ctx, client.ObjectKeyFromObject(cluster), cluster.Status); err != nil {
 		log.Error(err, "failed to update Cluster status")
 		return err
 	}
@@ -473,4 +493,16 @@ func (r *GitopsClusterReconciler) restConfigFromSecret(ctx context.Context, clus
 	}
 
 	return restCfg, nil
+}
+
+func (r *GitopsClusterReconciler) patchStatus(ctx context.Context, key client.ObjectKey, newStatus gitopsv1alpha1.GitopsClusterStatus) error {
+	var cluster gitopsv1alpha1.GitopsCluster
+	if err := r.Get(ctx, key, &cluster); err != nil {
+		return err
+	}
+
+	patch := client.MergeFrom(cluster.DeepCopy())
+	cluster.Status = newStatus
+
+	return r.Status().Patch(ctx, &cluster, patch)
 }
